@@ -1,0 +1,9 @@
+*.yaml
+!example-config.yaml
+!.pre-commit-config.yaml
+
+*.db*
+*.log*
+
+/mautrix-discord
+/start
