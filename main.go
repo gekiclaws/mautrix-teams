@@ -35,7 +35,9 @@ import (
 
 	"go.mau.fi/mautrix-teams/config"
 	"go.mau.fi/mautrix-teams/database"
+	"go.mau.fi/mautrix-teams/teams"
 	teamsauth "go.mau.fi/mautrix-teams/teams/auth"
+	"go.mau.fi/mautrix-teams/teams/poll"
 )
 
 // Information to find out exactly which commit the bridge was built from.
@@ -167,6 +169,7 @@ func (br *DiscordBridge) CreatePrivatePortal(id id.RoomID, user bridge.User, gho
 
 func main() {
 	runTeamsAuthTestIfRequested(os.Args)
+	runTeamsPollTestIfRequested(os.Args)
 	br := &DiscordBridge{
 		usersByMXID: make(map[id.UserID]*User),
 		usersByID:   make(map[string]*User),
@@ -225,6 +228,41 @@ func runTeamsAuthTestIfRequested(args []string) {
 	os.Exit(0)
 }
 
+func runTeamsPollTestIfRequested(args []string) {
+	if !shouldRunTeamsPollTest(args) && !envFlagEnabled("GO_TEAMS_POLL_TEST") {
+		return
+	}
+	log := zerolog.New(os.Stdout).With().Timestamp().Str("component", "teams-poll-test").Logger()
+
+	creds, err := teams.LoadGraphCredentialsFromEnv(".env")
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to load Graph credentials")
+		os.Exit(1)
+	}
+	userID := os.Getenv(teams.EnvGraphUserID)
+	if userID == "" {
+		log.Error().Msg("Missing required env var: " + teams.EnvGraphUserID)
+		os.Exit(1)
+	}
+
+	client, err := teams.NewGraphClient(context.Background(), creds)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to create Graph client")
+		os.Exit(1)
+	}
+
+	poller := &poll.Poller{
+		GraphClient: client,
+		UserID:      userID,
+		Cursor:      make(map[string]string),
+	}
+	if err := poller.RunOnce(context.Background(), log); err != nil {
+		log.Error().Err(err).Msg("Teams poll test failed")
+		os.Exit(1)
+	}
+	os.Exit(0)
+}
+
 func envFlagEnabled(key string) bool {
 	value, ok := os.LookupEnv(key)
 	if !ok {
@@ -237,6 +275,15 @@ func envFlagEnabled(key string) bool {
 func shouldRunTeamsAuthTest(args []string) bool {
 	for _, arg := range args {
 		if strings.EqualFold(arg, "--teams-auth-test") {
+			return true
+		}
+	}
+	return false
+}
+
+func shouldRunTeamsPollTest(args []string) bool {
+	for _, arg := range args {
+		if strings.EqualFold(arg, "--teams-poll-test") {
 			return true
 		}
 	}
