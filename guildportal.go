@@ -1,4 +1,4 @@
-// mautrix-discord - A Matrix-Discord puppeting bridge.
+// mautrix-teams - A Matrix-Teams puppeting bridge.
 // Copyright (C) 2022 Tulir Asokan
 //
 // This program is free software: you can redistribute it and/or modify
@@ -30,8 +30,8 @@ import (
 
 	"github.com/bwmarrin/discordgo"
 
-	"go.mau.fi/mautrix-discord/config"
-	"go.mau.fi/mautrix-discord/database"
+	"go.mau.fi/mautrix-teams/config"
+	"go.mau.fi/mautrix-teams/database"
 )
 
 type Guild struct {

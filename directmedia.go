@@ -1,4 +1,4 @@
-// mautrix-discord - A Matrix-Discord puppeting bridge.
+// mautrix-teams - A Matrix-Teams puppeting bridge.
 // Copyright (C) 2024 Tulir Asokan
 //
 // This program is free software: you can redistribute it and/or modify
@@ -44,8 +44,8 @@ import (
 	"maunium.net/go/mautrix/federation"
 	"maunium.net/go/mautrix/id"
 
-	"go.mau.fi/mautrix-discord/config"
-	"go.mau.fi/mautrix-discord/database"
+	"go.mau.fi/mautrix-teams/config"
+	"go.mau.fi/mautrix-teams/database"
 )
 
 type DirectMediaAPI struct {

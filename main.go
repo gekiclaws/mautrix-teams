@@ -1,4 +1,4 @@
-// mautrix-discord - A Matrix-Discord puppeting bridge.
+// mautrix-teams - A Matrix-Teams puppeting bridge.
 // Copyright (C) 2022 Tulir Asokan
 //
 // This program is free software: you can redistribute it and/or modify
@@ -29,8 +29,8 @@ import (
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
 
-	"go.mau.fi/mautrix-discord/config"
-	"go.mau.fi/mautrix-discord/database"
+	"go.mau.fi/mautrix-teams/config"
+	"go.mau.fi/mautrix-teams/database"
 )
 
 // Information to find out exactly which commit the bridge was built from.
@@ -184,8 +184,8 @@ func main() {
 		parallelAttachmentSemaphore: semaphore.NewWeighted(3),
 	}
 	br.Bridge = bridge.Bridge{
-		Name:              "mautrix-discord",
-		URL:               "https://github.com/mautrix/discord",
+		Name:              "mautrix-teams",
+		URL:               "https://github.com/mautrix/teams",
 		Description:       "A Matrix-Discord puppeting bridge.",
 		Version:           "0.7.5",
 		ProtocolName:      "Discord",

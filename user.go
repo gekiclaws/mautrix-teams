@@ -30,7 +30,7 @@ import (
 	"maunium.net/go/mautrix/id"
 	"maunium.net/go/mautrix/pushrules"
 
-	"go.mau.fi/mautrix-discord/database"
+	"go.mau.fi/mautrix-teams/database"
 )
 
 var (

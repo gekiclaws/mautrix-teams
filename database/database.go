@@ -8,7 +8,7 @@ import (
 	"go.mau.fi/util/dbutil"
 	"maunium.net/go/maulogger/v2"
 
-	"go.mau.fi/mautrix-discord/database/upgrades"
+	"go.mau.fi/mautrix-teams/database/upgrades"
 )
 
 type Database struct {

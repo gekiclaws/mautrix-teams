@@ -375,7 +375,7 @@ logging:
       format: pretty-colored
     - type: file
       format: json
-      filename: ./logs/mautrix-discord.log
+      filename: ./logs/mautrix-teams.log
       max_size: 100
       max_backups: 10
       compress: true
