@@ -8,3 +8,4 @@
 /mautrix-discord
 /start
 .env
+synapse-data/localhost.signing.key
