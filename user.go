@@ -2,13 +2,10 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
 	"fmt"
 	"math/rand"
 	"net/http"
-	"net/url"
-	"os"
 	"runtime/debug"
 	"sort"
 	"strconv"
@@ -31,6 +28,7 @@ import (
 	"maunium.net/go/mautrix/pushrules"
 
 	"go.mau.fi/mautrix-teams/database"
+	"go.mau.fi/mautrix-teams/teams"
 )
 
 var (
@@ -52,7 +50,7 @@ type User struct {
 	spaceMembershipChecked   bool
 	dmSpaceMembershipChecked bool
 
-	Session *discordgo.Session
+	Session *teams.Client
 
 	BridgeState     *bridge.BridgeStateQueue
 	bridgeStateLock sync.Mutex
@@ -546,10 +544,7 @@ func (user *User) Connect() error {
 
 	user.log.Debug().Msg("Connecting to discord")
 
-	session, err := discordgo.New(user.DiscordToken)
-	if err != nil {
-		return err
-	}
+	session := teams.NewClient()
 
 	if user.HeartbeatSession == nil || user.HeartbeatSession.IsExpired() {
 		user.log.Debug().Msg("Creating new heartbeat session")
@@ -558,58 +553,13 @@ func (user *User) Connect() error {
 	}
 	user.HeartbeatSession.BumpLastUsed()
 	user.Update()
-	// make discordgo use our session instead of the one it creates automatically
 	session.HeartbeatSession = *user.HeartbeatSession
 
-	if user.bridge.Config.Bridge.Proxy != "" {
-		u, _ := url.Parse(user.bridge.Config.Bridge.Proxy)
-		tlsConf := &tls.Config{
-			InsecureSkipVerify: os.Getenv("DISCORD_SKIP_TLS_VERIFICATION") == "true",
-		}
-		session.Client.Transport = &http.Transport{
-			Proxy:             http.ProxyURL(u),
-			TLSClientConfig:   tlsConf,
-			ForceAttemptHTTP2: true,
-		}
-		session.Dialer.Proxy = http.ProxyURL(u)
-		session.Dialer.TLSClientConfig = tlsConf
-	}
-	// TODO move to config
-	if os.Getenv("DISCORD_DEBUG") == "1" {
-		session.LogLevel = discordgo.LogDebug
-	} else {
-		session.LogLevel = discordgo.LogInformational
-	}
-	userDiscordLog := user.log.With().
-		Str("component", "discordgo").
-		Str("heartbeat_session", session.HeartbeatSession.ID.String()).
-		Logger()
-	session.Logger = func(msgL, caller int, format string, a ...interface{}) {
-		userDiscordLog.WithLevel(discordToZeroLevel(msgL)).Caller(caller+1).Msgf(strings.TrimSpace(format), a...) // zerolog-allow-msgf
-	}
-	if !session.IsUser {
-		session.Identify.Intents = BotIntents
-	}
 	session.EventHandler = user.eventHandlerSync
-
-	if session.IsUser {
-		err = session.LoadMainPage(context.TODO())
-		if err != nil {
-			user.log.Warn().Err(err).Msg("Failed to load main page")
-		}
-	}
 
 	user.Session = session
 
-	for {
-		err = user.Session.Open()
-		if errors.Is(err, discordgo.ErrImmediateDisconnect) {
-			user.log.Warn().Err(err).Msg("Retrying initial connection in 5 seconds")
-			time.Sleep(5 * time.Second)
-			continue
-		}
-		return err
-	}
+	return nil
 }
 
 func (user *User) eventHandlerSync(rawEvt any) {

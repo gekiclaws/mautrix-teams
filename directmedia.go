@@ -46,6 +46,7 @@ import (
 
 	"go.mau.fi/mautrix-teams/config"
 	"go.mau.fi/mautrix-teams/database"
+	"go.mau.fi/mautrix-teams/teams"
 )
 
 type DirectMediaAPI struct {
@@ -325,7 +326,7 @@ var ErrNoUsersWithAccessFound = errors.New("no users found to fetch message")
 var ErrAttachmentNotFound = errors.New("attachment not found")
 
 func (dma *DirectMediaAPI) fetchNewAttachmentURL(ctx context.Context, meta *AttachmentMediaData) (string, time.Time, error) {
-	var client *discordgo.Session
+	var client *teams.Client
 	channelIDStr := strconv.FormatUint(meta.ChannelID, 10)
 	portal := dma.bridge.GetExistingPortalByID(database.PortalKey{ChannelID: channelIDStr})
 	var users []id.UserID
