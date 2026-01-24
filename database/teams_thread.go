@@ -15,12 +15,13 @@ type TeamsThreadQuery struct {
 }
 
 const (
-	teamsThreadSelect = "SELECT thread_id, room_id, last_sequence_id, last_message_ts, last_message_id FROM teams_thread"
+	teamsThreadSelect = "SELECT thread_id, room_id, conversation_id, last_sequence_id, last_message_ts, last_message_id FROM teams_thread"
 	teamsThreadUpsert = `
-		INSERT INTO teams_thread (thread_id, room_id, last_sequence_id, last_message_ts, last_message_id)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO teams_thread (thread_id, room_id, conversation_id, last_sequence_id, last_message_ts, last_message_id)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		ON CONFLICT (thread_id) DO UPDATE
 		    SET room_id=excluded.room_id,
+		        conversation_id=excluded.conversation_id,
 		        last_sequence_id=excluded.last_sequence_id,
 		        last_message_ts=excluded.last_message_ts,
 		        last_message_id=excluded.last_message_id
@@ -69,6 +70,7 @@ type TeamsThread struct {
 	ThreadID string
 	RoomID   id.RoomID
 
+	ConversationID *string
 	LastSequenceID *string
 	LastMessageTS  *int64
 	LastMessageID  *string
@@ -76,11 +78,12 @@ type TeamsThread struct {
 
 func (t *TeamsThread) Scan(row dbutil.Scannable) *TeamsThread {
 	var roomID sql.NullString
+	var conversationID sql.NullString
 	var lastSequenceID sql.NullString
 	var lastMessageTS sql.NullInt64
 	var lastMessageID sql.NullString
 
-	err := row.Scan(&t.ThreadID, &roomID, &lastSequenceID, &lastMessageTS, &lastMessageID)
+	err := row.Scan(&t.ThreadID, &roomID, &conversationID, &lastSequenceID, &lastMessageTS, &lastMessageID)
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			t.log.Errorln("Database scan failed:", err)
@@ -90,6 +93,10 @@ func (t *TeamsThread) Scan(row dbutil.Scannable) *TeamsThread {
 	}
 
 	t.RoomID = id.RoomID(roomID.String)
+	if conversationID.Valid {
+		val := conversationID.String
+		t.ConversationID = &val
+	}
 	if lastSequenceID.Valid {
 		val := lastSequenceID.String
 		t.LastSequenceID = &val
@@ -106,7 +113,7 @@ func (t *TeamsThread) Scan(row dbutil.Scannable) *TeamsThread {
 }
 
 func (t *TeamsThread) Upsert() error {
-	_, err := t.db.Exec(teamsThreadUpsert, t.ThreadID, string(t.RoomID), nullableString(t.LastSequenceID), nullableInt64(t.LastMessageTS), nullableString(t.LastMessageID))
+	_, err := t.db.Exec(teamsThreadUpsert, t.ThreadID, string(t.RoomID), nullableString(t.ConversationID), nullableString(t.LastSequenceID), nullableInt64(t.LastMessageTS), nullableString(t.LastMessageID))
 	if err != nil {
 		t.log.Warnfln("Failed to upsert teams thread %s: %v", t.ThreadID, err)
 	}

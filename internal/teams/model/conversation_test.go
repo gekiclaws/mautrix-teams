@@ -17,6 +17,7 @@ func TestNormalizeMissingID(t *testing.T) {
 
 func TestNormalizeOneToOne(t *testing.T) {
 	conv := RemoteConversation{
+		ID: "@oneToOne.skype",
 		ThreadProperties: ThreadProperties{
 			OriginalThreadID:  "thread-123",
 			ProductThreadType: "OneToOneChat",
@@ -30,6 +31,9 @@ func TestNormalizeOneToOne(t *testing.T) {
 	}
 	if thread.ID != "thread-123" {
 		t.Fatalf("unexpected thread ID: %q", thread.ID)
+	}
+	if thread.ConversationID != "@oneToOne.skype" {
+		t.Fatalf("unexpected conversation ID: %q", thread.ConversationID)
 	}
 	if !thread.IsOneToOne {
 		t.Fatalf("expected IsOneToOne to be true")

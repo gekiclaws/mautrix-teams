@@ -293,7 +293,50 @@ func runRoomBootstrap(ctx context.Context, log *zerolog.Logger, cfg *config.Conf
 	rooms := teamsbridge.NewRoomsService(store, creator, *log)
 
 	consumer := consumerclient.NewClient(authClient.HTTP)
-	return teamsbridge.DiscoverAndEnsureRooms(ctx, state.SkypeToken, consumer, rooms, *log)
+	consumer.Token = state.SkypeToken
+	consumer.Log = log
+	if err := teamsbridge.DiscoverAndEnsureRooms(ctx, state.SkypeToken, consumer, rooms, *log); err != nil {
+		return err
+	}
+
+	ingestor := teamsbridge.MessageIngestor{
+		Lister: consumer,
+		Sender: &teamsbridge.BotMatrixSender{Client: client},
+		Log:    *log,
+	}
+
+	for _, thread := range teamsDB.TeamsThread.GetAll() {
+		if thread == nil {
+			continue
+		}
+		if thread.RoomID == "" {
+			log.Debug().
+				Str("thread_id", thread.ThreadID).
+				Msg("skipping message ingestion without room")
+			continue
+		}
+		conversationID := ""
+		if thread.ConversationID != nil {
+			conversationID = *thread.ConversationID
+		}
+		newSeq, advanced, err := ingestor.IngestThread(ctx, thread.ThreadID, conversationID, thread.RoomID, thread.LastSequenceID)
+		if err != nil {
+			return err
+		}
+		if !advanced {
+			continue
+		}
+		thread.LastSequenceID = &newSeq
+		if err := thread.Upsert(); err != nil {
+			return err
+		}
+		log.Info().
+			Str("thread_id", thread.ThreadID).
+			Str("seq", newSeq).
+			Msg("teams message sequence persisted")
+	}
+
+	return nil
 }
 
 func isConversationsError(err error) bool {

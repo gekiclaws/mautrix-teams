@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/rs/zerolog"
+
 	"go.mau.fi/mautrix-teams/internal/teams/model"
 )
 
@@ -29,6 +31,9 @@ func (e ConversationsError) Error() string {
 type Client struct {
 	HTTP             *http.Client
 	ConversationsURL string
+	MessagesURL      string
+	Token            string
+	Log              *zerolog.Logger
 }
 
 func NewClient(httpClient *http.Client) *Client {

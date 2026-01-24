@@ -161,6 +161,9 @@ func (r *RoomsService) EnsureRoom(thread model.Thread) (id.RoomID, bool, error) 
 				Str("thread_id", thread.ID).
 				Str("room_id", roomID.String()).
 				Msg("matrix room exists")
+			if err := r.Store.Put(thread, roomID); err != nil {
+				return "", false, err
+			}
 			return roomID, false, nil
 		}
 	}
@@ -172,7 +175,7 @@ func (r *RoomsService) EnsureRoom(thread model.Thread) (id.RoomID, bool, error) 
 		return "", false, err
 	}
 	if r.Store != nil {
-		if err := r.Store.Put(thread.ID, roomID); err != nil {
+		if err := r.Store.Put(thread, roomID); err != nil {
 			return "", false, err
 		}
 	}

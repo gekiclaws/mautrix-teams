@@ -6,11 +6,12 @@ import (
 	"maunium.net/go/mautrix/id"
 
 	"go.mau.fi/mautrix-teams/database"
+	"go.mau.fi/mautrix-teams/internal/teams/model"
 )
 
 type ThreadStore interface {
 	Get(threadID string) (id.RoomID, bool)
-	Put(threadID string, roomID id.RoomID) error
+	Put(thread model.Thread, roomID id.RoomID) error
 }
 
 type TeamsThreadStore struct {
@@ -48,18 +49,21 @@ func (s *TeamsThreadStore) Get(threadID string) (id.RoomID, bool) {
 	return roomID, ok
 }
 
-func (s *TeamsThreadStore) Put(threadID string, roomID id.RoomID) error {
+func (s *TeamsThreadStore) Put(thread model.Thread, roomID id.RoomID) error {
 	if s.db == nil || s.db.TeamsThread == nil {
 		return nil
 	}
 	record := s.db.TeamsThread.New()
-	record.ThreadID = threadID
+	record.ThreadID = thread.ID
 	record.RoomID = roomID
+	if thread.ConversationID != "" {
+		record.ConversationID = &thread.ConversationID
+	}
 	if err := record.Upsert(); err != nil {
 		return err
 	}
 	s.mu.Lock()
-	s.byThreadID[threadID] = roomID
+	s.byThreadID[thread.ID] = roomID
 	s.mu.Unlock()
 	return nil
 }

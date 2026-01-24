@@ -19,8 +19,8 @@ func (s *fakeStore) Get(threadID string) (id.RoomID, bool) {
 	return room, ok
 }
 
-func (s *fakeStore) Put(threadID string, roomID id.RoomID) error {
-	s.rooms[threadID] = roomID
+func (s *fakeStore) Put(thread model.Thread, roomID id.RoomID) error {
+	s.rooms[thread.ID] = roomID
 	return nil
 }
 
