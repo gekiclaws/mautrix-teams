@@ -26,6 +26,7 @@ const (
 		        last_message_ts=excluded.last_message_ts,
 		        last_message_id=excluded.last_message_id
 	`
+	teamsThreadUpdateLastSequence = "UPDATE teams_thread SET last_sequence_id=$1 WHERE thread_id=$2"
 )
 
 func (tq *TeamsThreadQuery) New() *TeamsThread {
@@ -61,6 +62,23 @@ func (tq *TeamsThreadQuery) GetAll() []*TeamsThread {
 		}
 	}
 	return threads
+}
+
+func (tq *TeamsThreadQuery) UpdateLastSequenceID(threadID string, sequenceID string) error {
+	if tq == nil || tq.db == nil {
+		return errors.New("missing database")
+	}
+	if threadID == "" {
+		return errors.New("missing thread id")
+	}
+	if sequenceID == "" {
+		return errors.New("missing sequence id")
+	}
+	_, err := tq.db.Exec(teamsThreadUpdateLastSequence, sequenceID, threadID)
+	if err != nil {
+		tq.log.Warnfln("Failed to update last_sequence_id for thread %s: %v", threadID, err)
+	}
+	return err
 }
 
 type TeamsThread struct {

@@ -1,73 +1,69 @@
 FLAGGED OPEN QUESTIONS
-- Sequence comparison: implement numeric when both parse as uint64, otherwise fall back to strings.Compare.
-- Failed Matrix send: stop processing the thread on the first send failure; do not advance last_sequence_id.
-- Empty-body messages: log at DEBUG and skip.
+- What is the exact Teams messages API query parameter for “since last sequence” (e.g., `since`, `startTime`, or another name), and should we send it as a query string or header? (Non-blocking for A3; only add if confirmed by traffic capture.)
 
 TASK CHECKLIST
-Phase 1 — Teams messages client + normalization
-☑ Add Teams consumer messages client with error handling and ordering
-☑ Add minimal message model normalization + parsing
-☑ Add unit tests for parsing, missing fields, ordering, and non-2xx errors
+Phase 1 — Teams incremental fetch (optional, non-blocking)
+☐ Only if confirmed by traffic capture: add optional sinceSequence query parameter behind a constant
+☐ Ensure client still orders messages via CompareSequenceID
+☐ Add unit tests for optional parameter handling and mixed sequence ordering
 
-Phase 2 — Deduplication + persistence
-☑ Add sequence comparison + filtering using last_sequence_id
-☑ Persist last_sequence_id updates only after successful sends
-☑ Add unit tests for dedup sequence handling and persistence decisions
+Phase 2 — Sync engine
+☑ Add SyncThread wrapper that loads last_sequence_id, sends via MessageIngestor, and persists once per thread
+☑ Enforce stop-on-first-send-failure and skip empty-body messages with DEBUG log
+☑ Add unit tests for no-resend, stop-on-failure, resume-after-failure, and empty-body skip
 
-Phase 3 — Matrix send + teams-login wiring + logging
-☑ Send messages into Matrix rooms via bot client
-☑ Wire one-shot ingestion into teams-login after room bootstrap
-☑ Add structured logging for discovery, send, persist, and errors
+Phase 3 — teams-login wiring + logging
+☑ Invoke sync per @thread.v2 thread after room discovery; skip non-@thread.v2 with DEBUG log
+☑ Continue syncing other threads on per-thread failure; exit non-zero only on DB/persistence failures, Matrix client init failure, or global fetch failure (cannot list conversations)
+☑ Add required structured logs for sync start/discovered/sent/complete and persistence errors
 
-PHASE 1 — Teams messages client + normalization
+PHASE 1 — Teams incremental fetch (optional, non-blocking)
 Files + changes
-- internal/teams/client/messages.go: add ListMessages(ctx, threadID, sinceSequence) to fetch consumer messages with Authorization: Bearer, parse payload, sort by SequenceID asc, and return RemoteMessage slice.
-- internal/teams/client/messages_test.go: add httptest coverage for success parse, missing optional fields, non-2xx error with truncated body, and ordering by SequenceID.
-- internal/teams/model/message.go: add RemoteMessage model (MessageID, SequenceID, SenderID, Timestamp, Body) and normalization helpers (timestamp parsing, body extraction) used by the client.
+- internal/teams/client/messages.go: if the exact param name is confirmed, add optional sinceSequence query parameter behind a constant; keep sorting by CompareSequenceID.
+- internal/teams/client/messages_test.go: add coverage for query parameter inclusion/omission and keep mixed numeric/string ordering tests aligned with CompareSequenceID.
 
 Implementation notes
-- Mirror patterns from internal/teams/client/conversations.go: default endpoint constant, ErrMissingHTTPClient, error type with Status + BodySnippet, and 2xx handling.
-- JSON parsing: define lightweight response struct with `messages` array and nested `content.text` + `sequenceId`/`id`/`from`/`createdTime` fields; normalization should tolerate missing fields.
-- Timestamp parsing: try time.RFC3339Nano then time.RFC3339; leave zero value on failure.
-- Sorting: after normalization, sort by SequenceID ascending using CompareSequenceID (numeric when possible, lexicographic fallback).
-- Do not filter by sinceSequence inside the client; keep filtering in Phase 2.
+- This phase is optional and should be skipped entirely for A3 unless the parameter name is confirmed via captured traffic.
+- If implemented, build the messages URL with url.Values so the optional sinceSequence parameter is encoded safely.
+- If implemented, be explicit that server-side filtering may occur when the param is present.
 
 Unit tests
-- messages_test.go: success response returns one normalized message, empty body filtered, timestamp parsed, and auth header is "Bearer <token>".
-- messages_test.go: missing optional fields (sender, timestamp) do not panic and yield zero values.
-- messages_test.go: non-2xx response returns error type with status and body snippet length == maxErrorBodyBytes.
-- messages_test.go: unordered input returns ascending SequenceID output.
-- messages_test.go: mixed SequenceID parse success/failure uses numeric compare when both parse; otherwise strings.Compare.
+- messages_test.go: verify when sinceSequence is non-empty, the request URL includes the query parameter; when empty, the URL has no since parameter.
+- messages_test.go: ensure ordering uses CompareSequenceID when sequences mix numeric and string values.
 
-PHASE 2 — Deduplication + persistence
+PHASE 2 — Sync engine
 Files + changes
-- internal/bridge/messages.go: add a small ingestion service that filters by last_sequence_id, skips empty-body messages with DEBUG logging, sends messages, and returns the last successfully-sent SequenceID when the thread completes without send failures.
-- internal/bridge/messages_test.go: add tests for sequence filtering, highest-seen tracking, and failure handling (no advance on failed send).
-- database/teams_thread.go: add helper methods for updating last_sequence_id in a TeamsThread record (or use existing Upsert with updated fields).
+- internal/bridge/sync.go: add a SyncThread function that wraps MessageIngestor to load last_sequence_id, send in order, and persist only after successful sends.
+- internal/bridge/messages.go: keep MessageIngestor focused on fetch + filter + send (single owner for filtering); adjust return/error signaling so a send failure stops the thread without advancing sequence.
+- internal/bridge/sync_test.go: add tests for persistence and restart-safe behavior.
+- database/teams_thread.go: add a narrow UpdateLastSequenceID(threadID, seq) helper to persist progress atomically per thread.
 
 Implementation notes
-- Keep sequence comparison isolated in a helper (e.g., CompareSequenceID(a, b string) int) so filtering + sorting share logic.
-- Ingestion flow for a thread: load last_sequence_id, call ListMessages, skip <= last_sequence_id, skip empty body with DEBUG log, send in order, stop on first send failure, track last successful SequenceID, persist updated last_sequence_id after successful sends.
-- Ensure last_sequence_id is only advanced when a send succeeds; do not update on fetch or parse errors.
+- Sync flow: log sync start with last_sequence_id, call MessageIngestor (which does ListMessages + filter + send), skip empty bodies with DEBUG, stop on first send failure, then persist highest successfully sent sequence once per thread.
+- Persistence rule: only update last_sequence_id after at least one successful send; never update on fetch/parse/send failures.
+- Use CompareSequenceID for all comparisons to keep numeric-vs-string ordering consistent.
 
 Unit tests
-- messages_test.go (bridge): given last_sequence_id, filter out older/equal sequence IDs.
-- messages_test.go (bridge): send failures do not advance last_sequence_id; verify returned updated sequence is unchanged and later messages are not sent.
-- messages_test.go (bridge): when all sends succeed, highest SequenceID is returned and persisted.
+- sync_test.go: no resend on second run (last_sequence_id persisted from first run and no sends on next run).
+- sync_test.go: stop on failed send; later messages are not sent and last_sequence_id is unchanged.
+- sync_test.go: resume correctly after failure (first run stops, second run resumes and persists).
+- sync_test.go: empty-body messages are skipped (no sends) but do not block later messages.
 
-PHASE 3 — Matrix send + teams-login wiring + logging
+PHASE 3 — teams-login wiring + logging
 Files + changes
-- internal/bridge/messages.go: add Matrix sender implementation using mautrix client SendMessageEvent with event.MessageEventContent{MsgType: m.text, Body: <text>}.
-- cmd/teams-login/main.go: after DiscoverAndEnsureRooms, iterate teams_thread records, fetch messages since last_sequence_id, send into mapped room, and persist updated last_sequence_id.
+- cmd/teams-login/main.go: after DiscoverAndEnsureRooms, iterate threads, skip non-@thread.v2 with DEBUG log, invoke SyncThread per thread, log per-thread success/failure, and continue on per-thread errors.
+- internal/bridge/sync.go or cmd/teams-login/main.go: add structured logging fields for sync lifecycle and persistence errors.
 
 Implementation notes
-- Use the existing bot client from runRoomBootstrap (mautrix.NewClient) for sends; avoid impersonation.
-- Logging with zerolog:
-  - INF teams message discovered thread_id=<id> seq=<n>
-  - INF matrix message sent room_id=<id> seq=<n>
-  - ERR failed to send message thread_id=<id> room_id=<id> seq=<n> err=<err>
-- Exit non-zero on message fetch failure or DB write failure; stop processing a thread on the first send failure and continue with other threads.
+- Logging (zerolog):
+  - INFO teams sync start thread_id=<id> last_seq=<n>
+  - INFO teams message discovered thread_id=<id> seq=<n>
+  - INFO matrix message sent room_id=<id> seq=<n>
+  - INFO teams sync complete thread_id=<id> new_last_seq=<n>
+  - DEBUG teams message skipped empty body thread_id=<id> seq=<n>
+  - ERROR failed to send matrix message thread_id=<id> room_id=<id> seq=<n> err=<err>
+  - ERROR failed to persist last_sequence_id thread_id=<id> err=<err>
+- Exit non-zero only on DB schema/migration failure, DB read/write failures for mapping/sequence, Matrix client init failure, or the agreed “global fetch failure” (cannot list conversations/threads at all).
 
 Unit tests
-- messages_test.go (bridge): stub Matrix sender to capture sent bodies; verify one event per message, msgtype m.text, body matches.
-- messages_test.go (bridge): ensure logs are emitted for discovery/sent/error (if logging is asserted in existing tests).
+- (No new tests in this phase; logging is covered by sync tests and behavior is verified via error handling paths.)

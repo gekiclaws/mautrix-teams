@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -304,6 +305,11 @@ func runRoomBootstrap(ctx context.Context, log *zerolog.Logger, cfg *config.Conf
 		Sender: &teamsbridge.BotMatrixSender{Client: client},
 		Log:    *log,
 	}
+	syncer := teamsbridge.ThreadSyncer{
+		Ingestor: &ingestor,
+		Store:    teamsDB.TeamsThread,
+		Log:      *log,
+	}
 
 	for _, thread := range teamsDB.TeamsThread.GetAll() {
 		if thread == nil {
@@ -315,25 +321,15 @@ func runRoomBootstrap(ctx context.Context, log *zerolog.Logger, cfg *config.Conf
 				Msg("skipping message ingestion without room")
 			continue
 		}
-		conversationID := ""
-		if thread.ConversationID != nil {
-			conversationID = *thread.ConversationID
-		}
-		newSeq, advanced, err := ingestor.IngestThread(ctx, thread.ThreadID, conversationID, thread.RoomID, thread.LastSequenceID)
-		if err != nil {
-			return err
-		}
-		if !advanced {
+		if !strings.HasSuffix(thread.ThreadID, "@thread.v2") {
+			log.Debug().
+				Str("thread_id", thread.ThreadID).
+				Msg("skipping non-v2 thread")
 			continue
 		}
-		thread.LastSequenceID = &newSeq
-		if err := thread.Upsert(); err != nil {
+		if err := syncer.SyncThread(ctx, thread); err != nil {
 			return err
 		}
-		log.Info().
-			Str("thread_id", thread.ThreadID).
-			Str("seq", newSeq).
-			Msg("teams message sequence persisted")
 	}
 
 	return nil

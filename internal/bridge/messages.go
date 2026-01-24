@@ -63,7 +63,6 @@ func (m *MessageIngestor) IngestThread(ctx context.Context, threadID string, con
 
 	messages, err := m.Lister.ListMessages(ctx, conversationID, since)
 	if err != nil {
-		m.Log.Error().Err(err).Str("thread_id", threadID).Msg("failed to list messages")
 		return "", false, err
 	}
 
@@ -76,7 +75,7 @@ func (m *MessageIngestor) IngestThread(ctx context.Context, threadID string, con
 			m.Log.Debug().
 				Str("thread_id", threadID).
 				Str("seq", msg.SequenceID).
-				Msg("skipping empty-body message")
+				Msg("teams message skipped empty body")
 			continue
 		}
 
@@ -91,7 +90,7 @@ func (m *MessageIngestor) IngestThread(ctx context.Context, threadID string, con
 				Str("thread_id", threadID).
 				Str("room_id", roomID.String()).
 				Str("seq", msg.SequenceID).
-				Msg("failed to send message")
+				Msg("failed to send matrix message")
 			return "", false, nil
 		}
 
