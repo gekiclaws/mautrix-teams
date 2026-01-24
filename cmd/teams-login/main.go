@@ -6,10 +6,12 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -26,6 +28,8 @@ import (
 var configPath = flag.MakeFull("c", "config", "The path to your config file.", "config.yaml").String()
 var manualMode = flag.MakeFull("m", "manual", "Manual paste mode.", "false").Bool()
 var noBrowser = flag.MakeFull("n", "no-browser", "Do not open a browser automatically.", "false").Bool()
+
+const probeEndpoint = "https://teams.live.com/api/mt/Me"
 
 func main() {
 	flag.SetHelpTitles("teams-login", "teams-login [-c <path>] [--manual] [--no-browser]")
@@ -82,6 +86,7 @@ func main() {
 				os.Exit(1)
 			}
 			log.Info().Msg("Auth state is valid")
+			runProbe(ctx, log, client)
 			return
 		}
 		log.Warn().Err(err).Msg("Stored auth state invalid; re-authentication required")
@@ -152,6 +157,7 @@ func main() {
 	}
 
 	log.Info().Msg("Login completed")
+	runProbe(ctx, log, client)
 }
 
 func loadConfig(path string) (*config.Config, error) {
@@ -199,4 +205,30 @@ func openBrowser(target string) error {
 		cmd = exec.Command("xdg-open", target)
 	}
 	return cmd.Start()
+}
+
+func runProbe(ctx context.Context, log *zerolog.Logger, client *auth.Client) {
+	result, err := client.ProbeTeamsEndpoint(ctx, probeEndpoint)
+	if err != nil {
+		log.Error().Err(err).Msg("Teams probe failed")
+		return
+	}
+	log.Info().
+		Int("status", result.StatusCode).
+		Str("body_snippet", result.BodySnippet).
+		Interface("auth_headers", result.AuthHeaders).
+		Msg("Teams probe response")
+
+	interpretation := "probe result unclear"
+	if result.StatusCode == http.StatusUnauthorized || result.StatusCode == http.StatusForbidden {
+		interpretation = "401/403 -> expected (missing Teams-native token)"
+	} else if result.StatusCode == http.StatusOK && looksJSON(result.BodySnippet) {
+		interpretation = "200/JSON -> cookies OK"
+	}
+	log.Info().Msg(interpretation)
+}
+
+func looksJSON(body string) bool {
+	trimmed := strings.TrimSpace(body)
+	return strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[")
 }
