@@ -11,6 +11,11 @@ import (
 func TestProbeTeamsEndpoint(t *testing.T) {
 	body := strings.Repeat("a", maxProbeBytes+10)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("ok"))
+			return
+		}
 		w.Header().Set("Set-Cookie", "session=abc; Path=/; Secure; HttpOnly")
 		w.Header().Set("X-Ms-Request-Id", "123")
 		w.WriteHeader(http.StatusForbidden)
@@ -19,7 +24,7 @@ func TestProbeTeamsEndpoint(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(nil)
-	result, err := client.ProbeTeamsEndpoint(context.Background(), server.URL)
+	result, err := client.ProbeTeamsEndpoint(context.Background(), server.URL, "")
 	if err != nil {
 		t.Fatalf("probe failed: %v", err)
 	}
@@ -34,5 +39,13 @@ func TestProbeTeamsEndpoint(t *testing.T) {
 	}
 	if result.AuthHeaders["X-Ms-Request-Id"] == "" {
 		t.Fatalf("missing auth header: X-Ms-Request-Id")
+	}
+
+	result, err = client.ProbeTeamsEndpoint(context.Background(), server.URL, "token123")
+	if err != nil {
+		t.Fatalf("probe with token failed: %v", err)
+	}
+	if result.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status with token: %d", result.StatusCode)
 	}
 }

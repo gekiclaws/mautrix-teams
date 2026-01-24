@@ -71,25 +71,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	if savedState != nil {
-		updated, refreshed, err := client.EnsureValidToken(ctx, savedState)
-		if err == nil && updated != nil {
-			if refreshed {
-				if err := stateStore.Save(updated); err != nil {
-					log.Error().Err(err).Msg("Failed to save refreshed auth state")
-					os.Exit(1)
-				}
-				log.Info().Msg("Token refreshed")
-			}
-			if err := cookieStore.Save(cookiesPath); err != nil {
-				log.Error().Err(err).Msg("Failed to save cookies")
-				os.Exit(1)
-			}
-			log.Info().Msg("Auth state is valid")
-			runProbe(ctx, log, client)
-			return
-		}
-		log.Warn().Err(err).Msg("Stored auth state invalid; re-authentication required")
+	now := time.Now().UTC()
+	if savedState != nil && savedState.HasValidSkypeToken(now) {
+		log.Info().Msg("Stored skypetoken is valid")
+		runProbe(ctx, log, client, savedState)
+		return
 	}
 
 	verifier, err := auth.GenerateCodeVerifier()
@@ -147,17 +133,30 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := stateStore.Save(state); err != nil {
-		log.Error().Err(err).Msg("Failed to save auth state")
-		os.Exit(1)
-	}
 	if err := cookieStore.Save(cookiesPath); err != nil {
 		log.Error().Err(err).Msg("Failed to save cookies")
 		os.Exit(1)
 	}
 
+	token, expiresAt, err := client.AcquireSkypeToken(ctx, state.AccessToken)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to acquire skypetoken")
+		os.Exit(1)
+	}
+	state.SkypeToken = token
+	state.SkypeTokenExpiresAt = expiresAt
+	state.AccessToken = ""
+	state.RefreshToken = ""
+	state.IDToken = ""
+	state.ExpiresAtUnix = 0
+	if err := stateStore.Save(state); err != nil {
+		log.Error().Err(err).Msg("Failed to save skypetoken")
+		os.Exit(1)
+	}
+	log.Info().Int64("expires_at", expiresAt).Msg("Skype token acquired")
+
 	log.Info().Msg("Login completed")
-	runProbe(ctx, log, client)
+	runProbe(ctx, log, client, state)
 }
 
 func loadConfig(path string) (*config.Config, error) {
@@ -207,8 +206,12 @@ func openBrowser(target string) error {
 	return cmd.Start()
 }
 
-func runProbe(ctx context.Context, log *zerolog.Logger, client *auth.Client) {
-	result, err := client.ProbeTeamsEndpoint(ctx, probeEndpoint)
+func runProbe(ctx context.Context, log *zerolog.Logger, client *auth.Client, state *auth.AuthState) {
+	token := ""
+	if state != nil && state.HasValidSkypeToken(time.Now().UTC()) {
+		token = state.SkypeToken
+	}
+	result, err := client.ProbeTeamsEndpoint(ctx, probeEndpoint, token)
 	if err != nil {
 		log.Error().Err(err).Msg("Teams probe failed")
 		return

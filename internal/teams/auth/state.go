@@ -10,10 +10,14 @@ import (
 )
 
 type AuthState struct {
+	// Bootstrap-only legacy tokens; do not use for Teams-native calls.
 	AccessToken   string `json:"access_token"`
 	RefreshToken  string `json:"refresh_token"`
 	ExpiresAtUnix int64  `json:"expires_at"`
 	IDToken       string `json:"id_token,omitempty"`
+
+	SkypeToken          string `json:"skype_token,omitempty"`
+	SkypeTokenExpiresAt int64  `json:"skype_token_expires_at,omitempty"`
 }
 
 func (a *AuthState) Expiry() time.Time {
@@ -49,7 +53,7 @@ func (s *StateStore) Load() (*AuthState, error) {
 		return nil, err
 	}
 
-	if state.AccessToken == "" && state.RefreshToken == "" {
+	if !state.hasAnyToken() {
 		return nil, nil
 	}
 
@@ -75,6 +79,13 @@ func (s *StateStore) Save(state *AuthState) error {
 	}
 
 	return writeFileAtomic(s.path, data, 0o600)
+}
+
+func (a *AuthState) hasAnyToken() bool {
+	if a == nil {
+		return false
+	}
+	return a.AccessToken != "" || a.RefreshToken != "" || a.IDToken != "" || a.SkypeToken != ""
 }
 
 func writeFileAtomic(path string, data []byte, perm os.FileMode) error {

@@ -34,17 +34,6 @@ func (c *Client) ExchangeCode(ctx context.Context, code, verifier string) (*Auth
 	return c.tokenRequest(ctx, values)
 }
 
-func (c *Client) Refresh(ctx context.Context, refreshToken string) (*AuthState, error) {
-	return nil, errors.New("refresh token exchange disabled for SPA-issued tokens")
-}
-
-func (c *Client) EnsureValidToken(ctx context.Context, state *AuthState) (*AuthState, bool, error) {
-	if state == nil {
-		return nil, false, errors.New("missing auth state")
-	}
-	return state, false, nil
-}
-
 func (c *Client) tokenRequest(ctx context.Context, values url.Values) (*AuthState, error) {
 	body := bytes.NewBufferString(values.Encode())
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.TokenEndpoint, body)

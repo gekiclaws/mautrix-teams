@@ -46,7 +46,7 @@ func TestAuthorizeURL(t *testing.T) {
 	}
 }
 
-func TestTokenExchangeAndRefresh(t *testing.T) {
+func TestTokenExchange(t *testing.T) {
 	var lastGrant string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
@@ -82,12 +82,5 @@ func TestTokenExchangeAndRefresh(t *testing.T) {
 	before := time.Now().UTC().Add(10 * time.Second).Unix()
 	if state.ExpiresAtUnix < before {
 		t.Fatalf("expiry too soon")
-	}
-}
-
-func TestRefreshDisabled(t *testing.T) {
-	client := NewClient(nil)
-	if _, err := client.Refresh(context.Background(), "refresh"); err == nil {
-		t.Fatalf("expected refresh to be disabled")
 	}
 }

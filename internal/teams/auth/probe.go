@@ -15,12 +15,15 @@ type ProbeResult struct {
 	AuthHeaders map[string]string
 }
 
-func (c *Client) ProbeTeamsEndpoint(ctx context.Context, endpoint string) (*ProbeResult, error) {
+func (c *Client) ProbeTeamsEndpoint(ctx context.Context, endpoint string, token string) (*ProbeResult, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Del("Authorization")
+	if token != "" {
+		c.AttachSkypeToken(req, token)
+	}
 
 	resp, err := c.HTTP.Do(req)
 	if err != nil {

@@ -11,11 +11,13 @@ import (
 type msalTokenKeys struct {
 	RefreshToken []string `json:"refreshToken"`
 	IDToken      []string `json:"idToken"`
+	AccessToken  []string `json:"accessToken"`
 }
 
 type msalTokenEntry struct {
 	Secret    string `json:"secret"`
 	ExpiresOn string `json:"expiresOn"`
+	Target    string `json:"target"`
 }
 
 func ExtractTokensFromMSALLocalStorage(raw string, clientID string) (*AuthState, error) {
@@ -58,6 +60,21 @@ func ExtractTokensFromMSALLocalStorage(raw string, clientID string) (*AuthState,
 		}
 	}
 
+	if len(keys.AccessToken) > 0 {
+		accessToken, expiresAt := selectMBIAccessToken(storage, keys.AccessToken)
+		if accessToken == "" {
+			targets := collectAccessTokenTargets(storage, keys.AccessToken, 6)
+			if len(targets) == 0 {
+				return nil, errors.New("MBI_SSL access token not found in localStorage")
+			}
+			return nil, errors.New("MBI_SSL access token not found in localStorage; observed targets: " + strings.Join(targets, ", "))
+		}
+		state.AccessToken = accessToken
+		if expiresAt != 0 {
+			state.ExpiresAtUnix = expiresAt
+		}
+	}
+
 	if len(keys.IDToken) > 0 {
 		if idEntry, ok := storage[keys.IDToken[0]]; ok {
 			var idToken msalTokenEntry
@@ -68,6 +85,70 @@ func ExtractTokensFromMSALLocalStorage(raw string, clientID string) (*AuthState,
 	}
 
 	return state, nil
+}
+
+const mbiAccessTokenMarker = "service::api.fl.spaces.skype.com::mbi_ssl"
+
+func selectMBIAccessToken(storage map[string]string, keys []string) (string, int64) {
+	var bestToken string
+	var bestExpiry int64
+	for _, key := range keys {
+		raw, ok := storage[key]
+		if !ok || raw == "" {
+			continue
+		}
+		var entry msalTokenEntry
+		if err := json.Unmarshal([]byte(raw), &entry); err != nil {
+			continue
+		}
+		if entry.Secret == "" || !matchesMBITarget(entry.Target) {
+			continue
+		}
+		expiry, _ := parseMSALExpires(entry.ExpiresOn)
+		if bestToken == "" || expiry > bestExpiry {
+			bestToken = entry.Secret
+			bestExpiry = expiry
+		}
+	}
+	return bestToken, bestExpiry
+}
+
+func matchesMBITarget(target string) bool {
+	if target == "" {
+		return false
+	}
+	lower := strings.ToLower(target)
+	return strings.Contains(lower, mbiAccessTokenMarker)
+}
+
+func collectAccessTokenTargets(storage map[string]string, keys []string, limit int) []string {
+	if limit <= 0 {
+		return nil
+	}
+	out := make([]string, 0, limit)
+	seen := make(map[string]struct{})
+	for _, key := range keys {
+		if len(out) >= limit {
+			break
+		}
+		raw, ok := storage[key]
+		if !ok || raw == "" {
+			continue
+		}
+		var entry msalTokenEntry
+		if err := json.Unmarshal([]byte(raw), &entry); err != nil {
+			continue
+		}
+		if entry.Target == "" {
+			continue
+		}
+		if _, ok := seen[entry.Target]; ok {
+			continue
+		}
+		seen[entry.Target] = struct{}{}
+		out = append(out, entry.Target)
+	}
+	return out
 }
 
 func parseStorage(raw string) (map[string]string, error) {

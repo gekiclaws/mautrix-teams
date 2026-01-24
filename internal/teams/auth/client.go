@@ -10,23 +10,25 @@ import (
 )
 
 const (
-	defaultAuthorizeEndpoint = "https://login.live.com/oauth20_authorize.srf"
-	defaultTokenEndpoint     = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token"
-	defaultClientID          = "4b3e8f46-56d3-427f-b1e2-d239b2ea6bca"
-	defaultRedirectURI       = "https://teams.live.com/v2"
+	defaultAuthorizeEndpoint  = "https://login.live.com/oauth20_authorize.srf"
+	defaultTokenEndpoint      = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token"
+	defaultSkypeTokenEndpoint = "https://teams.live.com/api/auth/v1.0/authz/consumer"
+	defaultClientID           = "4b3e8f46-56d3-427f-b1e2-d239b2ea6bca"
+	defaultRedirectURI        = "https://teams.live.com/v2"
 )
 
 var defaultScopes = []string{"openid", "profile", "offline_access"}
 
 type Client struct {
-	HTTP              *http.Client
-	CookieStore       *CookieStore
-	AuthorizeEndpoint string
-	TokenEndpoint     string
-	ClientID          string
-	RedirectURI       string
-	Scopes            []string
-	Log               *zerolog.Logger
+	HTTP               *http.Client
+	CookieStore        *CookieStore
+	AuthorizeEndpoint  string
+	TokenEndpoint      string
+	SkypeTokenEndpoint string
+	ClientID           string
+	RedirectURI        string
+	Scopes             []string
+	Log                *zerolog.Logger
 }
 
 func NewClient(store *CookieStore) *Client {
@@ -48,15 +50,23 @@ func NewClient(store *CookieStore) *Client {
 	logger := zerolog.Nop()
 
 	return &Client{
-		HTTP:              httpClient,
-		CookieStore:       store,
-		AuthorizeEndpoint: defaultAuthorizeEndpoint,
-		TokenEndpoint:     defaultTokenEndpoint,
-		ClientID:          defaultClientID,
-		RedirectURI:       defaultRedirectURI,
-		Scopes:            append([]string(nil), defaultScopes...),
-		Log:               &logger,
+		HTTP:               httpClient,
+		CookieStore:        store,
+		AuthorizeEndpoint:  defaultAuthorizeEndpoint,
+		TokenEndpoint:      defaultTokenEndpoint,
+		SkypeTokenEndpoint: defaultSkypeTokenEndpoint,
+		ClientID:           defaultClientID,
+		RedirectURI:        defaultRedirectURI,
+		Scopes:             append([]string(nil), defaultScopes...),
+		Log:                &logger,
 	}
+}
+
+func (c *Client) AttachSkypeToken(req *http.Request, token string) {
+	if req == nil || token == "" {
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
 }
 
 func (c *Client) AuthorizeURL(codeChallenge, state string) (string, error) {
