@@ -1,13 +1,13 @@
 # Homeserver details.
 homeserver:
     # The address that this appservice can use to connect to the homeserver.
-    address: https://matrix.example.com
+    address: https://matrix.beeper.com/_hungryserv/yourname
     # The domain of the homeserver (also known as server_name, used for MXIDs, etc).
-    domain: example.com
+    domain: matrix.beeper.com
 
     # What software is the homeserver running?
     # Standard Matrix homeservers like Synapse, Dendrite and Conduit should just use "standard" here.
-    software: standard
+    software: hungry
     # The URL to push real-time bridge status to.
     # If set, the bridge will make POST requests to this URL whenever a user's discord connection state changes.
     # The bridge will use the appservice as_token to authorize requests.
@@ -20,7 +20,7 @@ homeserver:
     # Should the bridge use a websocket for connecting to the homeserver?
     # The server side is currently not documented anywhere and is only implemented by mautrix-wsproxy,
     # mautrix-asmux (deprecated), and hungryserv (proprietary).
-    websocket: false
+    websocket: true
     # How often should the websocket be pinged? Pinging will be disabled if this is zero.
     ping_interval_seconds: 0
 
@@ -53,14 +53,14 @@ appservice:
         max_conn_lifetime: null
 
     # The unique ID of this appservice.
-    id: discord
+    id: sh-msteams
     # Appservice bot details.
     bot:
         # Username of the appservice bot.
-        username: discordbot
+        username: sh-msteamsbot
         # Display name and avatar for bot. Set to "remove" to remove display name/avatar, leave empty
         # to leave display name/avatar as-is.
-        displayname: Discord bridge bot
+        displayname: Teams bridge bot
         avatar: mxc://maunium.net/nIdEykemnwdisvHbpxflpDlC
 
     # Whether or not to receive ephemeral events via appservice transactions.
