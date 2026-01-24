@@ -11,7 +11,7 @@ import (
 func TestProbeTeamsEndpoint(t *testing.T) {
 	body := strings.Repeat("a", maxProbeBytes+10)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "" {
+		if r.Header.Get("authentication") != "" {
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("ok"))
 			return

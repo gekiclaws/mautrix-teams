@@ -11,7 +11,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -29,7 +28,7 @@ var configPath = flag.MakeFull("c", "config", "The path to your config file.", "
 var manualMode = flag.MakeFull("m", "manual", "Manual paste mode.", "false").Bool()
 var noBrowser = flag.MakeFull("n", "no-browser", "Do not open a browser automatically.", "false").Bool()
 
-const probeEndpoint = "https://teams.live.com/api/mt/Me"
+const probeEndpoint = "https://teams.live.com/api/chatsvc/consumer/v1/users/ME/properties"
 
 func main() {
 	flag.SetHelpTitles("teams-login", "teams-login [-c <path>] [--manual] [--no-browser]")
@@ -216,22 +215,26 @@ func runProbe(ctx context.Context, log *zerolog.Logger, client *auth.Client, sta
 		log.Error().Err(err).Msg("Teams probe failed")
 		return
 	}
-	log.Info().
-		Int("status", result.StatusCode).
-		Str("body_snippet", result.BodySnippet).
-		Interface("auth_headers", result.AuthHeaders).
-		Msg("Teams probe response")
-
-	interpretation := "probe result unclear"
-	if result.StatusCode == http.StatusUnauthorized || result.StatusCode == http.StatusForbidden {
-		interpretation = "401/403 -> expected (missing Teams-native token)"
-	} else if result.StatusCode == http.StatusOK && looksJSON(result.BodySnippet) {
-		interpretation = "200/JSON -> cookies OK"
+	switch result.StatusCode {
+	case http.StatusOK:
+		log.Info().
+			Int("status", result.StatusCode).
+			Str("body_snippet", result.BodySnippet).
+			Msg("Teams consumer auth OK")
+	case http.StatusUnauthorized, http.StatusForbidden:
+		log.Error().
+			Int("status", result.StatusCode).
+			Str("body_snippet", result.BodySnippet).
+			Msg("Teams consumer auth failed")
+	case http.StatusNotFound, http.StatusMethodNotAllowed:
+		log.Debug().
+			Int("status", result.StatusCode).
+			Str("body_snippet", result.BodySnippet).
+			Msg("Teams probe endpoint mismatch")
+	default:
+		log.Info().
+			Int("status", result.StatusCode).
+			Str("body_snippet", result.BodySnippet).
+			Msg("Teams probe response")
 	}
-	log.Info().Msg(interpretation)
-}
-
-func looksJSON(body string) bool {
-	trimmed := strings.TrimSpace(body)
-	return strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[")
 }

@@ -36,6 +36,10 @@ func NewClient(store *CookieStore) *Client {
 	if transport == nil {
 		transport = &http.Transport{}
 	}
+	if typed, ok := transport.(*http.Transport); ok {
+		typed.ForceAttemptHTTP2 = true
+		typed.DisableCompression = true
+	}
 
 	var jar http.CookieJar
 	if store != nil {
@@ -66,7 +70,7 @@ func (c *Client) AttachSkypeToken(req *http.Request, token string) {
 	if req == nil || token == "" {
 		return
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("authentication", "skypetoken="+token)
 }
 
 func (c *Client) AuthorizeURL(codeChallenge, state string) (string, error) {

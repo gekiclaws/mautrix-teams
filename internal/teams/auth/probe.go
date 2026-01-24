@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-const maxProbeBytes = 2048
+const maxProbeBytes = 1024
 
 type ProbeResult struct {
 	StatusCode  int
@@ -21,6 +21,7 @@ func (c *Client) ProbeTeamsEndpoint(ctx context.Context, endpoint string, token 
 		return nil, err
 	}
 	req.Header.Del("Authorization")
+	req.Header.Del("authentication")
 	if token != "" {
 		c.AttachSkypeToken(req, token)
 	}
