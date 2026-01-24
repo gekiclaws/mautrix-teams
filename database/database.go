@@ -5,6 +5,7 @@ import (
 
 	_ "github.com/lib/pq"
 	_ "github.com/mattn/go-sqlite3"
+	_ "go.mau.fi/util/dbutil/litestream"
 	"go.mau.fi/util/dbutil"
 	"maunium.net/go/maulogger/v2"
 
@@ -23,6 +24,7 @@ type Database struct {
 	Guild    *GuildQuery
 	Role     *RoleQuery
 	File     *FileQuery
+	TeamsThread *TeamsThreadQuery
 }
 
 func New(baseDB *dbutil.Database, log maulogger.Logger) *Database {
@@ -63,6 +65,10 @@ func New(baseDB *dbutil.Database, log maulogger.Logger) *Database {
 	db.File = &FileQuery{
 		db:  db,
 		log: log.Sub("File"),
+	}
+	db.TeamsThread = &TeamsThreadQuery{
+		db:  db,
+		log: log.Sub("TeamsThread"),
 	}
 	return db
 }

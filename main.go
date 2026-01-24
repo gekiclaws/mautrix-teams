@@ -121,6 +121,7 @@ func (br *DiscordBridge) Start() {
 	br.DMA = newDirectMediaAPI(br)
 	br.WaitWebsocketConnected()
 	go br.startUsers()
+	br.startTeamsConsumerRoomSync()
 }
 
 func (br *DiscordBridge) Stop() {

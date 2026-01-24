@@ -15,13 +15,20 @@ import (
 
 	"github.com/rs/zerolog"
 	deflog "github.com/rs/zerolog/log"
+	"go.mau.fi/util/dbutil"
 	"go.mau.fi/util/exzerolog"
 	"gopkg.in/yaml.v3"
 	flag "maunium.net/go/mauflag"
+	"maunium.net/go/maulogger/v2/maulogadapt"
+	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/bridge/bridgeconfig"
+	"maunium.net/go/mautrix/id"
 
 	"go.mau.fi/mautrix-teams/config"
+	"go.mau.fi/mautrix-teams/database"
+	teamsbridge "go.mau.fi/mautrix-teams/internal/bridge"
 	"go.mau.fi/mautrix-teams/internal/teams/auth"
+	consumerclient "go.mau.fi/mautrix-teams/internal/teams/client"
 )
 
 var configPath = flag.MakeFull("c", "config", "The path to your config file.", "config.yaml").String()
@@ -74,6 +81,12 @@ func main() {
 	if savedState != nil && savedState.HasValidSkypeToken(now) {
 		log.Info().Msg("Stored skypetoken is valid")
 		runProbe(ctx, log, client, savedState)
+		if err := runRoomBootstrap(ctx, log, cfg, client, savedState); err != nil {
+			if !isConversationsError(err) {
+				log.Error().Err(err).Msg("Teams room bootstrap failed")
+			}
+			os.Exit(1)
+		}
 		return
 	}
 
@@ -156,6 +169,12 @@ func main() {
 
 	log.Info().Msg("Login completed")
 	runProbe(ctx, log, client, state)
+	if err := runRoomBootstrap(ctx, log, cfg, client, state); err != nil {
+		if !isConversationsError(err) {
+			log.Error().Err(err).Msg("Teams room bootstrap failed")
+		}
+		os.Exit(1)
+	}
 }
 
 func loadConfig(path string) (*config.Config, error) {
@@ -237,4 +256,47 @@ func runProbe(ctx context.Context, log *zerolog.Logger, client *auth.Client, sta
 			Str("body_snippet", result.BodySnippet).
 			Msg("Teams probe response")
 	}
+}
+
+func runRoomBootstrap(ctx context.Context, log *zerolog.Logger, cfg *config.Config, authClient *auth.Client, state *auth.AuthState) error {
+	if state == nil || !state.HasValidSkypeToken(time.Now().UTC()) {
+		return errors.New("missing or expired skypetoken")
+	}
+	if cfg == nil || cfg.BaseConfig == nil {
+		return errors.New("missing config")
+	}
+
+	dbConfig := cfg.AppService.Database
+	db, err := dbutil.NewFromConfig("mautrix-teams", dbConfig, dbutil.ZeroLogger(log.With().Str("db_section", "main").Logger()))
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	teamsDB := database.New(db, maulogadapt.ZeroAsMau(log).Sub("Database"))
+	if err := teamsDB.Upgrade(); err != nil {
+		return err
+	}
+
+	store := teamsbridge.NewTeamsThreadStore(teamsDB)
+	store.LoadAll()
+
+	botMXID := id.UserID(fmt.Sprintf("@%s:%s", cfg.AppService.Bot.Username, cfg.Homeserver.Domain))
+	client, err := mautrix.NewClient(cfg.Homeserver.Address, botMXID, cfg.AppService.ASToken)
+	if err != nil {
+		return err
+	}
+	client.SetAppServiceUserID = true
+	client.Log = *log
+	client.Logger = maulogadapt.ZeroAsMau(&client.Log)
+	creator := teamsbridge.NewClientRoomCreator(client, &cfg.Bridge)
+	rooms := teamsbridge.NewRoomsService(store, creator, *log)
+
+	consumer := consumerclient.NewClient(authClient.HTTP)
+	return teamsbridge.DiscoverAndEnsureRooms(ctx, state.SkypeToken, consumer, rooms, *log)
+}
+
+func isConversationsError(err error) bool {
+	var convErr consumerclient.ConversationsError
+	return errors.As(err, &convErr)
 }
