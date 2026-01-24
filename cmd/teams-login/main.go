@@ -1,0 +1,202 @@
+package main
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"time"
+
+	"github.com/rs/zerolog"
+	deflog "github.com/rs/zerolog/log"
+	"go.mau.fi/util/exzerolog"
+	"gopkg.in/yaml.v3"
+	flag "maunium.net/go/mauflag"
+	"maunium.net/go/mautrix/bridge/bridgeconfig"
+
+	"go.mau.fi/mautrix-teams/config"
+	"go.mau.fi/mautrix-teams/internal/teams/auth"
+)
+
+var configPath = flag.MakeFull("c", "config", "The path to your config file.", "config.yaml").String()
+var manualMode = flag.MakeFull("m", "manual", "Manual paste mode.", "false").Bool()
+var noBrowser = flag.MakeFull("n", "no-browser", "Do not open a browser automatically.", "false").Bool()
+
+func main() {
+	flag.SetHelpTitles("teams-login", "teams-login [-c <path>] [--manual] [--no-browser]")
+	if err := flag.Parse(); err != nil {
+		_, _ = fmt.Fprintln(os.Stderr, err)
+		flag.PrintHelp()
+		os.Exit(1)
+	}
+
+	cfg, err := loadConfig(*configPath)
+	if err != nil {
+		_, _ = fmt.Fprintln(os.Stderr, "Failed to load config:", err)
+		os.Exit(1)
+	}
+	log, err := setupLogger(cfg)
+	if err != nil {
+		_, _ = fmt.Fprintln(os.Stderr, "Failed to initialize logger:", err)
+		os.Exit(1)
+	}
+
+	stateDir := filepath.Dir(*configPath)
+	authPath := filepath.Join(stateDir, "auth.json")
+	cookiesPath := filepath.Join(stateDir, "cookies.json")
+
+	stateStore := auth.NewStateStore(authPath)
+	cookieStore, err := auth.LoadCookieStore(cookiesPath)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to load cookie jar")
+		os.Exit(1)
+	}
+
+	client := auth.NewClient(cookieStore)
+	client.Log = log
+	ctx := context.Background()
+
+	savedState, err := stateStore.Load()
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to load auth state")
+		os.Exit(1)
+	}
+
+	if savedState != nil {
+		updated, refreshed, err := client.EnsureValidToken(ctx, savedState)
+		if err == nil && updated != nil {
+			if refreshed {
+				if err := stateStore.Save(updated); err != nil {
+					log.Error().Err(err).Msg("Failed to save refreshed auth state")
+					os.Exit(1)
+				}
+				log.Info().Msg("Token refreshed")
+			}
+			if err := cookieStore.Save(cookiesPath); err != nil {
+				log.Error().Err(err).Msg("Failed to save cookies")
+				os.Exit(1)
+			}
+			log.Info().Msg("Auth state is valid")
+			return
+		}
+		log.Warn().Err(err).Msg("Stored auth state invalid; re-authentication required")
+	}
+
+	verifier, err := auth.GenerateCodeVerifier()
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to generate PKCE verifier")
+		os.Exit(1)
+	}
+	challenge := auth.CodeChallengeS256(verifier)
+	stateValue, err := randomState()
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to generate state")
+		os.Exit(1)
+	}
+
+	log.Info().Str("redirect_uri", client.RedirectURI).Msg("Authorize request redirect URI")
+	authorizeURL, err := client.AuthorizeURL(challenge, stateValue)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to build authorize URL")
+		os.Exit(1)
+	}
+
+	manual := *manualMode
+	var helper *auth.HelperListener
+	if !manual {
+		helper, err = auth.StartHelperListener(ctx, log, client.ClientID)
+		if err != nil {
+			manual = true
+			log.Warn().Err(err).Msg("Failed to start helper listener; falling back to manual mode")
+		} else {
+			log.Info().Msgf("Helper page available at %s", helper.URL)
+		}
+	}
+
+	if !*noBrowser {
+		if err := openBrowser(authorizeURL); err != nil {
+			log.Warn().Err(err).Msg("Failed to open browser")
+		} else {
+			log.Info().Msg("Browser opened for login")
+		}
+		if helper != nil {
+			if err := openBrowser(helper.URL); err != nil {
+				log.Warn().Err(err).Msg("Failed to open helper page")
+			}
+		}
+	}
+
+	var state *auth.AuthState
+	if manual {
+		state, err = auth.WaitForManualState(ctx, os.Stdin, os.Stdout, client.ClientID)
+	} else {
+		state, err = helper.WaitForState(ctx)
+	}
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to capture auth state")
+		os.Exit(1)
+	}
+
+	if err := stateStore.Save(state); err != nil {
+		log.Error().Err(err).Msg("Failed to save auth state")
+		os.Exit(1)
+	}
+	if err := cookieStore.Save(cookiesPath); err != nil {
+		log.Error().Err(err).Msg("Failed to save cookies")
+		os.Exit(1)
+	}
+
+	log.Info().Msg("Login completed")
+}
+
+func loadConfig(path string) (*config.Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	cfg := &config.Config{BaseConfig: &bridgeconfig.BaseConfig{}}
+	if err := yaml.Unmarshal(data, cfg); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
+func setupLogger(cfg *config.Config) (*zerolog.Logger, error) {
+	log, err := cfg.Logging.Compile()
+	if err != nil {
+		return nil, err
+	}
+	zerolog.TimeFieldFormat = time.RFC3339Nano
+	zerolog.CallerMarshalFunc = exzerolog.CallerWithFunctionName
+	deflog.Logger = log.With().Bool("global_log", true).Caller().Logger()
+	return log, nil
+}
+
+func randomState() (string, error) {
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(buf), nil
+}
+
+func openBrowser(target string) error {
+	if target == "" {
+		return errors.New("empty url")
+	}
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", target)
+	case "windows":
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", target)
+	default:
+		cmd = exec.Command("xdg-open", target)
+	}
+	return cmd.Start()
+}
