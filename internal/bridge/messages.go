@@ -3,12 +3,14 @@ package teamsbridge
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/rs/zerolog"
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
 
+	"go.mau.fi/mautrix-teams/database"
 	"go.mau.fi/mautrix-teams/internal/teams/model"
 )
 
@@ -17,14 +19,14 @@ type MessageLister interface {
 }
 
 type MatrixSender interface {
-	SendText(roomID id.RoomID, body string) (id.EventID, error)
+	SendText(roomID id.RoomID, body string, extra map[string]any) (id.EventID, error)
 }
 
 type BotMatrixSender struct {
 	Client *mautrix.Client
 }
 
-func (s *BotMatrixSender) SendText(roomID id.RoomID, body string) (id.EventID, error) {
+func (s *BotMatrixSender) SendText(roomID id.RoomID, body string, extra map[string]any) (id.EventID, error) {
 	if s == nil || s.Client == nil {
 		return "", errors.New("missing matrix client")
 	}
@@ -32,17 +34,24 @@ func (s *BotMatrixSender) SendText(roomID id.RoomID, body string) (id.EventID, e
 		MsgType: event.MsgText,
 		Body:    body,
 	}
-	resp, err := s.Client.SendMessageEvent(roomID, event.EventMessage, &content)
+	wrapped := event.Content{Parsed: &content, Raw: extra}
+	resp, err := s.Client.SendMessageEvent(roomID, event.EventMessage, &wrapped)
 	if err != nil {
 		return "", err
 	}
 	return resp.EventID, nil
 }
 
+type ProfileStore interface {
+	GetByTeamsUserID(teamsUserID string) *database.TeamsProfile
+	InsertIfMissing(profile *database.TeamsProfile) (bool, error)
+}
+
 type MessageIngestor struct {
-	Lister MessageLister
-	Sender MatrixSender
-	Log    zerolog.Logger
+	Lister   MessageLister
+	Sender   MatrixSender
+	Profiles ProfileStore
+	Log      zerolog.Logger
 }
 
 func (m *MessageIngestor) IngestThread(ctx context.Context, threadID string, conversationID string, roomID id.RoomID, lastSequenceID *string) (string, bool, error) {
@@ -84,7 +93,54 @@ func (m *MessageIngestor) IngestThread(ctx context.Context, threadID string, con
 			Str("seq", msg.SequenceID).
 			Msg("teams message discovered")
 
-		if _, err := m.Sender.SendText(roomID, msg.Body); err != nil {
+		senderID := model.NormalizeTeamsUserID(msg.SenderID)
+		displayName := ""
+		var existingProfile *database.TeamsProfile
+		if m.Profiles != nil && senderID != "" {
+			existingProfile = m.Profiles.GetByTeamsUserID(senderID)
+			if existingProfile == nil {
+				createdAt := model.ChooseLastSeenTS(msg.Timestamp, time.Now().UTC())
+				profile := &database.TeamsProfile{
+					TeamsUserID: senderID,
+					DisplayName: msg.SenderName,
+					LastSeenTS:  createdAt,
+				}
+				inserted, err := m.Profiles.InsertIfMissing(profile)
+				if err != nil {
+					m.Log.Error().
+						Err(err).
+						Str("teams_user_id", senderID).
+						Msg("failed to insert teams profile")
+				} else if inserted {
+					m.Log.Info().
+						Str("teams_user_id", senderID).
+						Str("display_name", profile.DisplayName).
+						Bool("display_name_empty", profile.DisplayName == "").
+						Msg("teams profile inserted")
+				}
+				existingProfile = profile
+			}
+		}
+
+		if existingProfile != nil && existingProfile.DisplayName != "" {
+			displayName = existingProfile.DisplayName
+		} else if msg.SenderName != "" {
+			displayName = msg.SenderName
+		} else if senderID != "" {
+			displayName = senderID
+		}
+
+		var extra map[string]any
+		if senderID != "" && displayName != "" {
+			extra = map[string]any{
+				"com.beeper.per_message_profile": map[string]any{
+					"id":          senderID,
+					"displayname": displayName,
+				},
+			}
+		}
+
+		if _, err := m.Sender.SendText(roomID, msg.Body, extra); err != nil {
 			m.Log.Error().
 				Err(err).
 				Str("thread_id", threadID).

@@ -301,9 +301,10 @@ func runRoomBootstrap(ctx context.Context, log *zerolog.Logger, cfg *config.Conf
 	}
 
 	ingestor := teamsbridge.MessageIngestor{
-		Lister: consumer,
-		Sender: &teamsbridge.BotMatrixSender{Client: client},
-		Log:    *log,
+		Lister:   consumer,
+		Sender:   &teamsbridge.BotMatrixSender{Client: client},
+		Profiles: teamsDB.TeamsProfile,
+		Log:      *log,
 	}
 	syncer := teamsbridge.ThreadSyncer{
 		Ingestor: &ingestor,

@@ -65,7 +65,8 @@ func (c *Client) ListMessages(ctx context.Context, conversationID string, sinceS
 		if err != nil {
 			return nil, err
 		}
-		senderID := model.ExtractSenderID(msg.From)
+		senderID := model.NormalizeTeamsUserID(model.ExtractSenderID(msg.From))
+		senderName := model.ExtractSenderName(msg.From)
 		if senderID == "" && c.Log != nil {
 			c.Log.Debug().
 				Str("message_id", msg.ID).
@@ -75,6 +76,7 @@ func (c *Client) ListMessages(ctx context.Context, conversationID string, sinceS
 			MessageID:  msg.ID,
 			SequenceID: sequenceID,
 			SenderID:   senderID,
+			SenderName: senderName,
 			Timestamp:  model.ParseTimestamp(msg.CreatedTime),
 			Body:       model.ExtractBody(msg.Content),
 		})

@@ -69,6 +69,12 @@ CREATE TABLE teams_thread (
     last_message_id TEXT
 );
 
+CREATE TABLE teams_profile (
+    teams_user_id TEXT PRIMARY KEY,
+    display_name TEXT NOT NULL,
+    last_seen_ts BIGINT NOT NULL
+);
+
 CREATE TABLE puppet (
     id TEXT PRIMARY KEY,
 
