@@ -7,3 +7,7 @@
 
 /mautrix-discord
 /start
+synapse-data/localhost.signing.key
+auth.json
+cookies.json
+.env

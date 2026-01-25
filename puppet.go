@@ -14,7 +14,7 @@ import (
 	"maunium.net/go/mautrix/bridge"
 	"maunium.net/go/mautrix/id"
 
-	"go.mau.fi/mautrix-discord/database"
+	"go.mau.fi/mautrix-teams/database"
 )
 
 type Puppet struct {

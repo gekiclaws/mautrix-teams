@@ -35,8 +35,9 @@ import (
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
 
-	"go.mau.fi/mautrix-discord/config"
-	"go.mau.fi/mautrix-discord/database"
+	"go.mau.fi/mautrix-teams/config"
+	"go.mau.fi/mautrix-teams/database"
+	"go.mau.fi/mautrix-teams/teams"
 )
 
 type portalDiscordMessage struct {
@@ -1514,7 +1515,7 @@ func (portal *Portal) RefererOpt(threadID string) discordgo.RequestOption {
 	return discordgo.WithChannelReferer(portal.GuildID, portal.Key.ChannelID)
 }
 
-func (portal *Portal) RefererOptIfUser(sess *discordgo.Session, threadID string) []discordgo.RequestOption {
+func (portal *Portal) RefererOptIfUser(sess *teams.Client, threadID string) []discordgo.RequestOption {
 	if sess == nil || !sess.IsUser {
 		return nil
 	}

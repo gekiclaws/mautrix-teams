@@ -1,5 +1,5 @@
-# mautrix-discord
-A Matrix-Discord puppeting bridge based on [discordgo](https://github.com/bwmarrin/discordgo).
+# mautrix-teams
+A Matrix-Teams puppeting bridge based on [discordgo](https://github.com/bwmarrin/discordgo).
 
 ## Documentation
 All setup and usage instructions are located on [docs.mau.fi]. Some quick links:
@@ -12,7 +12,7 @@ All setup and usage instructions are located on [docs.mau.fi]. Some quick links:
   [Relaying with webhooks](https://docs.mau.fi/bridges/go/discord/relay.html)
 
 ### Features & Roadmap
-[ROADMAP.md](https://github.com/mautrix/discord/blob/main/ROADMAP.md)
+[ROADMAP.md](https://github.com/mautrix/teams/blob/main/ROADMAP.md)
 contains a general overview of what is supported by the bridge.
 
 ## Discussion

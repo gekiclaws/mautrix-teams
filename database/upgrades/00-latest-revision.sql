@@ -1,4 +1,4 @@
--- v0 -> v24 (compatible with v19+): Latest revision
+-- v0 -> v25 (compatible with v19+): Latest revision
 
 CREATE TABLE guild (
     dcid       TEXT PRIMARY KEY,
@@ -58,6 +58,15 @@ CREATE TABLE thread (
     receiver   TEXT NOT NULL DEFAULT '',
 
     CONSTRAINT thread_parent_fkey FOREIGN KEY (parent_chan_id, receiver) REFERENCES portal(dcid, receiver) ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+CREATE TABLE teams_thread (
+    thread_id TEXT PRIMARY KEY,
+    room_id TEXT UNIQUE,
+    conversation_id TEXT,
+    last_sequence_id TEXT,
+    last_message_ts BIGINT,
+    last_message_id TEXT
 );
 
 CREATE TABLE puppet (

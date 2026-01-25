@@ -19,8 +19,8 @@ import (
 	"maunium.net/go/mautrix/bridge/bridgeconfig"
 	"maunium.net/go/mautrix/id"
 
-	"go.mau.fi/mautrix-discord/database"
-	"go.mau.fi/mautrix-discord/remoteauth"
+	"go.mau.fi/mautrix-teams/database"
+	"go.mau.fi/mautrix-teams/remoteauth"
 )
 
 const (

@@ -15,8 +15,8 @@
 
 [MSC4193]: https://github.com/matrix-org/matrix-spec-proposals/pull/4193
 [MSC4190]: https://github.com/matrix-org/matrix-spec-proposals/pull/4190
-[@LeaPhant]: https://github.com/mautrix/discord/pull/189
-[#189]: https://github.com/mautrix/discord/pull/189
+[@LeaPhant]: https://github.com/mautrix/teams/pull/189
+[#189]: https://github.com/mautrix/teams/pull/189
 
 # v0.7.3 (2025-04-16)
 
@@ -30,8 +30,8 @@
 
 [@mat-1]: https://github.com/mat-1
 [@ginnyTheCat]: https://github.com/ginnyTheCat
-[#172]: https://github.com/mautrix/discord/pull/172
-[#177]: https://github.com/mautrix/discord/pull/177
+[#172]: https://github.com/mautrix/teams/pull/172
+[#177]: https://github.com/mautrix/teams/pull/177
 [MSC4144]: https://github.com/matrix-org/matrix-spec-proposals/pull/4144
 
 # v0.7.2 (2024-12-16)
@@ -84,7 +84,7 @@
   (thanks to [@odrling] in [#110]).
 
 [@odrling]: https://github.com/odrling
-[#110]: https://github.com/mautrix/discord/pull/110
+[#110]: https://github.com/mautrix/teams/pull/110
 
 # v0.6.1 (2023-08-16)
 
@@ -148,7 +148,7 @@
   bridge.
 
 [@odrling]: https://github.com/odrling
-[#81]: https://github.com/mautrix/discord/pull/81
+[#81]: https://github.com/mautrix/teams/pull/81
 
 # v0.3.0 (2023-04-16)
 

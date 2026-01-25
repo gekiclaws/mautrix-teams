@@ -1,4 +1,4 @@
-module go.mau.fi/mautrix-discord
+module go.mau.fi/mautrix-teams
 
 go 1.24.0
 
