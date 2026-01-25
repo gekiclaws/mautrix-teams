@@ -9,12 +9,14 @@ import (
 )
 
 type RemoteMessage struct {
-	MessageID  string
-	SequenceID string
-	SenderID   string
-	SenderName string
-	Timestamp  time.Time
-	Body       string
+	MessageID        string
+	SequenceID       string
+	SenderID         string
+	SenderName       string
+	IMDisplayName    string
+	TokenDisplayName string
+	Timestamp        time.Time
+	Body             string
 }
 
 func ExtractBody(content json.RawMessage) string {

@@ -19,7 +19,7 @@ func TestListMessagesSuccess(t *testing.T) {
 		gotAuth = append(gotAuth, r.Header.Get("authentication"))
 		gotPath = r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"messages":[{"id":"m1","sequenceId":2,"from":{"id":"u1","displayName":"User One"},"createdTime":"2024-01-01T00:00:00Z","content":{"text":"hello"}},{"id":"m2","sequenceId":"1","content":{"text":""}}]}`))
+		_, _ = w.Write([]byte(`{"messages":[{"id":"m1","sequenceId":2,"from":{"id":"u1"},"imdisplayname":"User One","fromDisplayNameInToken":"Token User","createdTime":"2024-01-01T00:00:00Z","content":{"text":"hello"}},{"id":"m2","sequenceId":"1","content":{"text":""}}]}`))
 	}))
 	defer server.Close()
 
@@ -54,8 +54,14 @@ func TestListMessagesSuccess(t *testing.T) {
 	if msgs[1].SenderID != "u1" {
 		t.Fatalf("unexpected sender id: %q", msgs[1].SenderID)
 	}
-	if msgs[1].SenderName != "User One" {
+	if msgs[1].SenderName != "" {
 		t.Fatalf("unexpected sender name: %q", msgs[1].SenderName)
+	}
+	if msgs[1].IMDisplayName != "User One" {
+		t.Fatalf("unexpected imdisplayname: %q", msgs[1].IMDisplayName)
+	}
+	if msgs[1].TokenDisplayName != "Token User" {
+		t.Fatalf("unexpected token display name: %q", msgs[1].TokenDisplayName)
 	}
 	if msgs[1].Body != "hello" {
 		t.Fatalf("unexpected body: %q", msgs[1].Body)
@@ -96,6 +102,12 @@ func TestListMessagesMissingOptionalFields(t *testing.T) {
 	}
 	if msgs[0].SenderName != "" {
 		t.Fatalf("expected empty sender name")
+	}
+	if msgs[0].IMDisplayName != "" {
+		t.Fatalf("expected empty imdisplayname")
+	}
+	if msgs[0].TokenDisplayName != "" {
+		t.Fatalf("expected empty token display name")
 	}
 	if !msgs[0].Timestamp.IsZero() {
 		t.Fatalf("expected zero timestamp")
@@ -180,8 +192,8 @@ func TestListMessagesFromVariants(t *testing.T) {
 	if msgs[1].SenderID != "8:live:mattckwong" {
 		t.Fatalf("unexpected sender id for object: %q", msgs[1].SenderID)
 	}
-	if msgs[1].SenderName != "Matt" {
-		t.Fatalf("unexpected sender name for object: %q", msgs[1].SenderName)
+	if msgs[1].SenderName != "" {
+		t.Fatalf("expected empty sender name for object: %q", msgs[1].SenderName)
 	}
 	if msgs[2].SenderID != "" {
 		t.Fatalf("expected empty sender id for empty from")

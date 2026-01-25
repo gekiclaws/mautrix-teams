@@ -22,6 +22,11 @@ const (
 		VALUES ($1, $2, $3)
 		ON CONFLICT (teams_user_id) DO NOTHING
 	`
+	teamsProfileUpdateDisplayName = `
+		UPDATE teams_profile
+		SET display_name=$1, last_seen_ts=$2
+		WHERE teams_user_id=$3
+	`
 )
 
 func (tq *TeamsProfileQuery) New() *TeamsProfile {
@@ -50,6 +55,23 @@ func (tq *TeamsProfileQuery) InsertIfMissing(profile *TeamsProfile) (bool, error
 		return false, err
 	}
 	return rows > 0, nil
+}
+
+func (tq *TeamsProfileQuery) UpdateDisplayName(teamsUserID string, displayName string, lastSeenTS time.Time) error {
+	if tq == nil || tq.db == nil {
+		return errors.New("missing database")
+	}
+	if teamsUserID == "" {
+		return errors.New("missing teams user id")
+	}
+	if displayName == "" {
+		return errors.New("missing display name")
+	}
+	_, err := tq.db.Exec(teamsProfileUpdateDisplayName, displayName, lastSeenTS.UnixMilli(), teamsUserID)
+	if err != nil {
+		tq.log.Warnfln("Failed to update display name for teams profile %s: %v", teamsUserID, err)
+	}
+	return err
 }
 
 type TeamsProfile struct {

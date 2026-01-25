@@ -3,6 +3,7 @@ package teamsbridge
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -45,6 +46,7 @@ func (s *BotMatrixSender) SendText(roomID id.RoomID, body string, extra map[stri
 type ProfileStore interface {
 	GetByTeamsUserID(teamsUserID string) *database.TeamsProfile
 	InsertIfMissing(profile *database.TeamsProfile) (bool, error)
+	UpdateDisplayName(teamsUserID string, displayName string, lastSeenTS time.Time) error
 }
 
 type MessageIngestor struct {
@@ -94,15 +96,16 @@ func (m *MessageIngestor) IngestThread(ctx context.Context, threadID string, con
 			Msg("teams message discovered")
 
 		senderID := model.NormalizeTeamsUserID(msg.SenderID)
+		isUserID := strings.HasPrefix(senderID, "8:")
 		displayName := ""
 		var existingProfile *database.TeamsProfile
-		if m.Profiles != nil && senderID != "" {
+		if m.Profiles != nil && senderID != "" && isUserID {
 			existingProfile = m.Profiles.GetByTeamsUserID(senderID)
 			if existingProfile == nil {
 				createdAt := model.ChooseLastSeenTS(msg.Timestamp, time.Now().UTC())
 				profile := &database.TeamsProfile{
 					TeamsUserID: senderID,
-					DisplayName: msg.SenderName,
+					DisplayName: msg.IMDisplayName,
 					LastSeenTS:  createdAt,
 				}
 				inserted, err := m.Profiles.InsertIfMissing(profile)
@@ -122,10 +125,32 @@ func (m *MessageIngestor) IngestThread(ctx context.Context, threadID string, con
 			}
 		}
 
+		if existingProfile != nil && msg.IMDisplayName != "" && existingProfile.DisplayName != msg.IMDisplayName {
+			updatedAt := model.ChooseLastSeenTS(msg.Timestamp, time.Now().UTC())
+			if err := m.Profiles.UpdateDisplayName(senderID, msg.IMDisplayName, updatedAt); err != nil {
+				m.Log.Error().
+					Err(err).
+					Str("teams_user_id", senderID).
+					Str("old_display_name", existingProfile.DisplayName).
+					Str("new_display_name", msg.IMDisplayName).
+					Msg("failed to update teams profile display name")
+			} else {
+				m.Log.Info().
+					Str("teams_user_id", senderID).
+					Str("old_display_name", existingProfile.DisplayName).
+					Str("new_display_name", msg.IMDisplayName).
+					Msg("teams profile display name updated")
+			}
+			existingProfile.DisplayName = msg.IMDisplayName
+			existingProfile.LastSeenTS = updatedAt
+		}
+
 		if existingProfile != nil && existingProfile.DisplayName != "" {
 			displayName = existingProfile.DisplayName
-		} else if msg.SenderName != "" {
-			displayName = msg.SenderName
+		} else if msg.IMDisplayName != "" {
+			displayName = msg.IMDisplayName
+		} else if msg.TokenDisplayName != "" {
+			displayName = msg.TokenDisplayName
 		} else if senderID != "" {
 			displayName = senderID
 		}

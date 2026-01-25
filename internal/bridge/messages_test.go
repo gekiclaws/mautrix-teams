@@ -45,6 +45,7 @@ func (f *fakeMatrixSender) SendText(roomID id.RoomID, body string, extra map[str
 type fakeProfileStore struct {
 	byID        map[string]*database.TeamsProfile
 	insertedIDs []string
+	updatedIDs  []string
 }
 
 func (f *fakeProfileStore) GetByTeamsUserID(teamsUserID string) *database.TeamsProfile {
@@ -64,6 +65,21 @@ func (f *fakeProfileStore) InsertIfMissing(profile *database.TeamsProfile) (bool
 	f.byID[profile.TeamsUserID] = profile
 	f.insertedIDs = append(f.insertedIDs, profile.TeamsUserID)
 	return true, nil
+}
+
+func (f *fakeProfileStore) UpdateDisplayName(teamsUserID string, displayName string, lastSeenTS time.Time) error {
+	if f.byID == nil {
+		f.byID = make(map[string]*database.TeamsProfile)
+	}
+	profile := f.byID[teamsUserID]
+	if profile == nil {
+		profile = &database.TeamsProfile{TeamsUserID: teamsUserID}
+		f.byID[teamsUserID] = profile
+	}
+	profile.DisplayName = displayName
+	profile.LastSeenTS = lastSeenTS
+	f.updatedIDs = append(f.updatedIDs, teamsUserID)
+	return nil
 }
 
 func TestIngestThreadFiltersBySequence(t *testing.T) {
@@ -160,7 +176,7 @@ func TestIngestThreadInsertsProfileAndUsesDisplayName(t *testing.T) {
 	now := time.Date(2024, 2, 3, 4, 5, 6, 0, time.UTC)
 	lister := &fakeMessageLister{
 		messages: []model.RemoteMessage{
-			{SequenceID: "1", SenderID: "user-1", SenderName: "User One", Timestamp: now, Body: "one"},
+			{SequenceID: "1", SenderID: "user-1", IMDisplayName: "User One", Timestamp: now, Body: "one"},
 		},
 	}
 	sender := &fakeMatrixSender{}
@@ -201,7 +217,7 @@ func TestIngestThreadInsertsProfileAndUsesDisplayName(t *testing.T) {
 func TestIngestThreadUsesCachedDisplayName(t *testing.T) {
 	lister := &fakeMessageLister{
 		messages: []model.RemoteMessage{
-			{SequenceID: "1", SenderID: "user-2", SenderName: "Payload Name", Body: "one"},
+			{SequenceID: "1", SenderID: "user-2", IMDisplayName: "Payload Name", Body: "one"},
 		},
 	}
 	sender := &fakeMatrixSender{}
@@ -237,5 +253,168 @@ func TestIngestThreadUsesCachedDisplayName(t *testing.T) {
 	}
 	if perMessage["displayname"] != "Cached Name" {
 		t.Fatalf("unexpected per-message display name: %#v", perMessage["displayname"])
+	}
+}
+
+func TestIngestThreadUpdatesDisplayNameOnChange(t *testing.T) {
+	when := time.Date(2024, 3, 4, 5, 6, 7, 0, time.UTC)
+	lister := &fakeMessageLister{
+		messages: []model.RemoteMessage{
+			{SequenceID: "1", SenderID: "user-3", IMDisplayName: "New Name", Timestamp: when, Body: "one"},
+		},
+	}
+	sender := &fakeMatrixSender{}
+	store := &fakeProfileStore{
+		byID: map[string]*database.TeamsProfile{
+			"user-3": {
+				TeamsUserID: "user-3",
+				DisplayName: "Old Name",
+				LastSeenTS:  time.Now().UTC(),
+			},
+		},
+	}
+	ingestor := &MessageIngestor{
+		Lister:   lister,
+		Sender:   sender,
+		Profiles: store,
+		Log:      zerolog.New(io.Discard),
+	}
+
+	_, advanced, err := ingestor.IngestThread(context.Background(), "thread-1", "@oneToOne.skype", "!room:example", nil)
+	if err != nil {
+		t.Fatalf("IngestThread failed: %v", err)
+	}
+	if !advanced {
+		t.Fatalf("expected advancement on success")
+	}
+	if len(store.updatedIDs) != 1 || store.updatedIDs[0] != "user-3" {
+		t.Fatalf("expected display name update for user-3, got %#v", store.updatedIDs)
+	}
+	if store.byID["user-3"].DisplayName != "New Name" {
+		t.Fatalf("expected updated display name, got %#v", store.byID["user-3"])
+	}
+	if !store.byID["user-3"].LastSeenTS.Equal(when) {
+		t.Fatalf("expected last seen ts to update, got %s", store.byID["user-3"].LastSeenTS.Format(time.RFC3339))
+	}
+	perMessage, ok := sender.extra[0]["com.beeper.per_message_profile"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing per-message profile metadata")
+	}
+	if perMessage["displayname"] != "New Name" {
+		t.Fatalf("unexpected per-message display name: %#v", perMessage["displayname"])
+	}
+}
+
+func TestIngestThreadDoesNotUpdateWhenIMDisplayNameEmpty(t *testing.T) {
+	lister := &fakeMessageLister{
+		messages: []model.RemoteMessage{
+			{SequenceID: "1", SenderID: "user-4", TokenDisplayName: "Token Name", Body: "one"},
+		},
+	}
+	sender := &fakeMatrixSender{}
+	store := &fakeProfileStore{
+		byID: map[string]*database.TeamsProfile{
+			"user-4": {
+				TeamsUserID: "user-4",
+				DisplayName: "",
+				LastSeenTS:  time.Now().UTC(),
+			},
+		},
+	}
+	ingestor := &MessageIngestor{
+		Lister:   lister,
+		Sender:   sender,
+		Profiles: store,
+		Log:      zerolog.New(io.Discard),
+	}
+
+	_, advanced, err := ingestor.IngestThread(context.Background(), "thread-1", "@oneToOne.skype", "!room:example", nil)
+	if err != nil {
+		t.Fatalf("IngestThread failed: %v", err)
+	}
+	if !advanced {
+		t.Fatalf("expected advancement on success")
+	}
+	if len(store.updatedIDs) != 0 {
+		t.Fatalf("expected no display name updates, got %#v", store.updatedIDs)
+	}
+	perMessage, ok := sender.extra[0]["com.beeper.per_message_profile"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing per-message profile metadata")
+	}
+	if perMessage["displayname"] != "Token Name" {
+		t.Fatalf("unexpected per-message display name: %#v", perMessage["displayname"])
+	}
+}
+
+func TestIngestThreadDoesNotUpdateWhenNameUnchanged(t *testing.T) {
+	lister := &fakeMessageLister{
+		messages: []model.RemoteMessage{
+			{SequenceID: "1", SenderID: "user-5", IMDisplayName: "Same Name", Body: "one"},
+		},
+	}
+	sender := &fakeMatrixSender{}
+	store := &fakeProfileStore{
+		byID: map[string]*database.TeamsProfile{
+			"user-5": {
+				TeamsUserID: "user-5",
+				DisplayName: "Same Name",
+				LastSeenTS:  time.Now().UTC(),
+			},
+		},
+	}
+	ingestor := &MessageIngestor{
+		Lister:   lister,
+		Sender:   sender,
+		Profiles: store,
+		Log:      zerolog.New(io.Discard),
+	}
+
+	_, advanced, err := ingestor.IngestThread(context.Background(), "thread-1", "@oneToOne.skype", "!room:example", nil)
+	if err != nil {
+		t.Fatalf("IngestThread failed: %v", err)
+	}
+	if !advanced {
+		t.Fatalf("expected advancement on success")
+	}
+	if len(store.updatedIDs) != 0 {
+		t.Fatalf("expected no display name updates, got %#v", store.updatedIDs)
+	}
+	perMessage, ok := sender.extra[0]["com.beeper.per_message_profile"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing per-message profile metadata")
+	}
+	if perMessage["displayname"] != "Same Name" {
+		t.Fatalf("unexpected per-message display name: %#v", perMessage["displayname"])
+	}
+}
+
+func TestIngestThreadSkipsProfileForNonUserID(t *testing.T) {
+	lister := &fakeMessageLister{
+		messages: []model.RemoteMessage{
+			{SequenceID: "1", SenderID: "19:abc@thread.v2", IMDisplayName: "Thread Name", Body: "one"},
+		},
+	}
+	sender := &fakeMatrixSender{}
+	store := &fakeProfileStore{}
+	ingestor := &MessageIngestor{
+		Lister:   lister,
+		Sender:   sender,
+		Profiles: store,
+		Log:      zerolog.New(io.Discard),
+	}
+
+	_, advanced, err := ingestor.IngestThread(context.Background(), "thread-1", "@oneToOne.skype", "!room:example", nil)
+	if err != nil {
+		t.Fatalf("IngestThread failed: %v", err)
+	}
+	if !advanced {
+		t.Fatalf("expected advancement on success")
+	}
+	if len(store.insertedIDs) != 0 {
+		t.Fatalf("expected no profile insert, got %#v", store.insertedIDs)
+	}
+	if len(store.updatedIDs) != 0 {
+		t.Fatalf("expected no profile updates, got %#v", store.updatedIDs)
 	}
 }
