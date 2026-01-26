@@ -56,7 +56,7 @@ func TestBuildDevMatrixTextEvent(t *testing.T) {
 		t.Fatalf("unexpected event id: %s", evt.ID)
 	}
 	if evt.Type != event.EventMessage {
-		t.Fatalf("unexpected event type: %s", evt.Type)
+		t.Fatalf("unexpected event type: %v", evt.Type)
 	}
 	content, ok := evt.Content.Parsed.(*event.MessageEventContent)
 	if !ok || content == nil {
