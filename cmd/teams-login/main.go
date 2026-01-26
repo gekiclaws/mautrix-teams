@@ -313,7 +313,13 @@ func runRoomBootstrap(ctx context.Context, log *zerolog.Logger, cfg *config.Conf
 		Profiles:    teamsDB.TeamsProfile,
 		SendIntents: teamsDB.TeamsSendIntent,
 		MessageMap:  teamsDB.TeamsMessageMap,
-		Log:         *log,
+		ReactionIngestor: &teamsbridge.TeamsReactionIngestor{
+			Sender:    &teamsbridge.BotMatrixReactionSender{Client: client},
+			Messages:  teamsDB.TeamsMessageMap,
+			Reactions: teamsDB.TeamsReaction,
+			Log:       *log,
+		},
+		Log: *log,
 	}
 	syncer := teamsbridge.ThreadSyncer{
 		Ingestor: &ingestor,

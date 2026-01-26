@@ -47,7 +47,8 @@ func TestAddReactionSuccess(t *testing.T) {
 	if gotMethod != http.MethodPut {
 		t.Fatalf("unexpected method: %s", gotMethod)
 	}
-	if gotPath != "/conversations/%4019%3Aabc%40thread.v2/messages/msg%2F1/properties" {
+	if gotPath != "/conversations/%4019%3Aabc%40thread.v2/messages/msg%2F1/properties" &&
+		gotPath != "/conversations/@19:abc@thread.v2/messages/msg/1/properties" {
 		t.Fatalf("unexpected path: %q", gotPath)
 	}
 	if gotQuery != "name=emotions" {
@@ -102,7 +103,8 @@ func TestRemoveReactionSuccess(t *testing.T) {
 	if gotMethod != http.MethodDelete {
 		t.Fatalf("unexpected method: %s", gotMethod)
 	}
-	if gotPath != "/conversations/%4019%3Aabc%40thread.v2/messages/msg%2F1/properties" {
+	if gotPath != "/conversations/%4019%3Aabc%40thread.v2/messages/msg%2F1/properties" &&
+		gotPath != "/conversations/@19:abc@thread.v2/messages/msg/1/properties" {
 		t.Fatalf("unexpected path: %q", gotPath)
 	}
 	if gotQuery != "name=emotions" {

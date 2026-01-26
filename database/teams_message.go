@@ -38,6 +38,17 @@ func (mq *TeamsMessageMapQuery) GetByMXID(mxid id.EventID) *TeamsMessageMap {
 	return mq.New().Scan(mq.db.QueryRow(query, mxid))
 }
 
+func (mq *TeamsMessageMapQuery) GetByTeamsMessageID(threadID string, teamsMessageID string) *TeamsMessageMap {
+	if mq == nil || mq.db == nil {
+		return nil
+	}
+	if threadID == "" || teamsMessageID == "" {
+		return nil
+	}
+	query := teamsMessageMapSelect + " WHERE thread_id=$1 AND teams_message_id=$2"
+	return mq.New().Scan(mq.db.QueryRow(query, threadID, teamsMessageID))
+}
+
 func (mq *TeamsMessageMapQuery) Upsert(mapping *TeamsMessageMap) error {
 	if mapping == nil {
 		return errors.New("missing mapping")

@@ -56,6 +56,16 @@ var emojiToEmotionKey = map[string]string{
 	variationselector.FullyQualify("😡"):  "angry",
 }
 
+var emotionKeyToEmoji = func() map[string]string {
+	inverse := make(map[string]string, len(emojiToEmotionKey))
+	for emoji, key := range emojiToEmotionKey {
+		if _, exists := inverse[key]; !exists {
+			inverse[key] = emoji
+		}
+	}
+	return inverse
+}()
+
 func MapEmojiToEmotionKey(emoji string) (string, bool) {
 	if strings.TrimSpace(emoji) == "" {
 		return "", false
@@ -63,6 +73,15 @@ func MapEmojiToEmotionKey(emoji string) (string, bool) {
 	normalized := variationselector.FullyQualify(emoji)
 	key, ok := emojiToEmotionKey[normalized]
 	return key, ok
+}
+
+func MapEmotionKeyToEmoji(emotionKey string) (string, bool) {
+	emotionKey = strings.TrimSpace(emotionKey)
+	if emotionKey == "" {
+		return "", false
+	}
+	emoji, ok := emotionKeyToEmoji[emotionKey]
+	return emoji, ok
 }
 
 func (r *TeamsConsumerReactor) AddMatrixReaction(ctx context.Context, roomID id.RoomID, evt *event.Event) error {

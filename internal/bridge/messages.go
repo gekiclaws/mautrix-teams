@@ -58,12 +58,13 @@ type ProfileStore interface {
 }
 
 type MessageIngestor struct {
-	Lister      MessageLister
-	Sender      MatrixSender
-	Profiles    ProfileStore
-	SendIntents SendIntentLookup
-	MessageMap  TeamsMessageMapWriter
-	Log         zerolog.Logger
+	Lister           MessageLister
+	Sender           MatrixSender
+	Profiles         ProfileStore
+	SendIntents      SendIntentLookup
+	MessageMap       TeamsMessageMapWriter
+	ReactionIngestor MessageReactionIngestor
+	Log              zerolog.Logger
 }
 
 func (m *MessageIngestor) IngestThread(ctx context.Context, threadID string, conversationID string, roomID id.RoomID, lastSequenceID *string) (string, bool, error) {
@@ -90,6 +91,7 @@ func (m *MessageIngestor) IngestThread(ctx context.Context, threadID string, con
 	lastSuccess := ""
 	for _, msg := range messages {
 		if lastSequenceID != nil && model.CompareSequenceID(msg.SequenceID, *lastSequenceID) <= 0 {
+			m.ingestReactions(ctx, threadID, roomID, msg, "")
 			continue
 		}
 		if msg.Body == "" {
@@ -97,6 +99,7 @@ func (m *MessageIngestor) IngestThread(ctx context.Context, threadID string, con
 				Str("thread_id", threadID).
 				Str("seq", msg.SequenceID).
 				Msg("teams message skipped empty body")
+			m.ingestReactions(ctx, threadID, roomID, msg, "")
 			continue
 		}
 
@@ -207,6 +210,8 @@ func (m *MessageIngestor) IngestThread(ctx context.Context, threadID string, con
 			}
 		}
 
+		m.ingestReactions(ctx, threadID, roomID, msg, maybeMapMXID)
+
 		m.Log.Info().
 			Str("room_id", roomID.String()).
 			Str("seq", msg.SequenceID).
@@ -220,4 +225,22 @@ func (m *MessageIngestor) IngestThread(ctx context.Context, threadID string, con
 	}
 
 	return lastSuccess, true, nil
+}
+
+type MessageReactionIngestor interface {
+	IngestMessageReactions(ctx context.Context, threadID string, roomID id.RoomID, msg model.RemoteMessage, targetMXID id.EventID) error
+}
+
+func (m *MessageIngestor) ingestReactions(ctx context.Context, threadID string, roomID id.RoomID, msg model.RemoteMessage, targetMXID id.EventID) {
+	if m == nil || m.ReactionIngestor == nil {
+		return
+	}
+	if err := m.ReactionIngestor.IngestMessageReactions(ctx, threadID, roomID, msg, targetMXID); err != nil {
+		m.Log.Error().
+			Err(err).
+			Str("thread_id", threadID).
+			Str("teams_message_id", msg.MessageID).
+			Str("seq", msg.SequenceID).
+			Msg("failed to ingest teams reactions")
+	}
 }

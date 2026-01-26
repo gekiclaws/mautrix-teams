@@ -51,6 +51,7 @@ type remoteMessage struct {
 	IMDisplayName          string          `json:"imdisplayname"`
 	FromDisplayNameInToken string          `json:"fromDisplayNameInToken"`
 	Content                json.RawMessage `json:"content"`
+	Properties             json.RawMessage `json:"properties"`
 }
 
 func (c *Client) ListMessages(ctx context.Context, conversationID string, sinceSequence string) ([]model.RemoteMessage, error) {
@@ -98,6 +99,7 @@ func (c *Client) ListMessages(ctx context.Context, conversationID string, sinceS
 			TokenDisplayName: msg.FromDisplayNameInToken,
 			Timestamp:        model.ParseTimestamp(msg.CreatedTime),
 			Body:             model.ExtractBody(msg.Content),
+			Reactions:        model.ExtractReactions(msg.Properties),
 		})
 	}
 

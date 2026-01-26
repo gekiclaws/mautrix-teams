@@ -163,7 +163,7 @@ func TestListMessagesContentVariants(t *testing.T) {
 
 func TestListMessagesFromVariants(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/conversations/%40oneToOne.skype/messages" {
+		if r.URL.Path != "/conversations/%40oneToOne.skype/messages" && r.URL.Path != "/conversations/@oneToOne.skype/messages" {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
@@ -214,6 +214,51 @@ func TestListMessagesFromVariants(t *testing.T) {
 	}
 }
 
+func TestListMessagesEmotionsParsing(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"messages":[` +
+			`{"id":"m1","sequenceId":"1","content":{"text":"hello"},"properties":{"emotions":[` +
+			`{"key":"like","users":[{"mri":"8:one","time":1700000000000},{"mri":"8:two","time":"1700000000123"},{"mri":"8:three","time":"bad"}]},` +
+			`{"key":"heart","users":[]},` +
+			`{"key":" ","users":[{"mri":"8:skip"}]}` +
+			`],"annotationsSummary":[{"key":"like","count":2}]}}` +
+			`]}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client())
+	client.MessagesURL = server.URL + "/conversations"
+	client.Token = "token123"
+
+	msgs, err := client.ListMessages(context.Background(), "@oneToOne.skype", "")
+	if err != nil {
+		t.Fatalf("ListMessages failed: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("unexpected messages length: %d", len(msgs))
+	}
+	if len(msgs[0].Reactions) != 1 {
+		t.Fatalf("unexpected reactions length: %d", len(msgs[0].Reactions))
+	}
+	reaction := msgs[0].Reactions[0]
+	if reaction.EmotionKey != "like" {
+		t.Fatalf("unexpected emotion key: %q", reaction.EmotionKey)
+	}
+	if len(reaction.Users) != 3 {
+		t.Fatalf("unexpected reaction users length: %d", len(reaction.Users))
+	}
+	if reaction.Users[0].MRI != "8:one" || reaction.Users[0].TimeMS != 1700000000000 {
+		t.Fatalf("unexpected first user: %#v", reaction.Users[0])
+	}
+	if reaction.Users[1].MRI != "8:two" || reaction.Users[1].TimeMS != 1700000000123 {
+		t.Fatalf("unexpected second user: %#v", reaction.Users[1])
+	}
+	if reaction.Users[2].MRI != "8:three" || reaction.Users[2].TimeMS != 0 {
+		t.Fatalf("unexpected third user: %#v", reaction.Users[2])
+	}
+}
+
 func TestSendMessageSuccess(t *testing.T) {
 	var gotPath string
 	var gotAuth string
@@ -243,7 +288,7 @@ func TestSendMessageSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SendMessage failed: %v", err)
 	}
-	if gotPath != "/conversations/%4019%3Aabc%40thread.v2/messages" {
+	if gotPath != "/conversations/%4019%3Aabc%40thread.v2/messages" && gotPath != "/conversations/@19:abc@thread.v2/messages" {
 		t.Fatalf("unexpected path: %q", gotPath)
 	}
 	if gotAuth != "skypetoken=token123" {

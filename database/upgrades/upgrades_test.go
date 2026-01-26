@@ -1,7 +1,6 @@
 package upgrades
 
 import (
-	"context"
 	"testing"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -18,7 +17,7 @@ func TestUpgradesIncludeTeamsSendIntent(t *testing.T) {
 
 	db.UpgradeTable = Table
 	db.Log = dbutil.ZeroLogger(zerolog.Nop())
-	if err := db.Upgrade(context.Background()); err != nil {
+	if err := db.Upgrade(); err != nil {
 		t.Fatalf("failed to apply upgrades: %v", err)
 	}
 	var name string
@@ -30,5 +29,8 @@ func TestUpgradesIncludeTeamsSendIntent(t *testing.T) {
 	}
 	if err := db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='teams_reaction_map'").Scan(&name); err != nil {
 		t.Fatalf("teams_reaction_map table missing: %v", err)
+	}
+	if err := db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='teams_reaction'").Scan(&name); err != nil {
+		t.Fatalf("teams_reaction table missing: %v", err)
 	}
 }
