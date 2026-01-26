@@ -88,8 +88,9 @@ type DiscordBridge struct {
 	attachmentTransfers         *exsync.Map[attachmentKey, *exsync.ReturnableOnce[*database.File]]
 	parallelAttachmentSemaphore *semaphore.Weighted
 
-	TeamsThreadStore    *teamsbridge.TeamsThreadStore
-	TeamsConsumerSender *teamsbridge.TeamsConsumerSender
+	TeamsThreadStore     *teamsbridge.TeamsThreadStore
+	TeamsConsumerSender  *teamsbridge.TeamsConsumerSender
+	TeamsConsumerReactor *teamsbridge.TeamsConsumerReactor
 }
 
 func (br *DiscordBridge) GetExampleConfig() string {
@@ -181,6 +182,9 @@ func (br *DiscordBridge) CreatePrivatePortal(id id.RoomID, user bridge.User, gho
 
 func main() {
 	if handled, exitCode := runDevSendIfRequested(os.Args[1:]); handled {
+		os.Exit(exitCode)
+	}
+	if handled, exitCode := runDevReactIfRequested(os.Args[1:]); handled {
 		os.Exit(exitCode)
 	}
 	runTeamsAuthTestIfRequested(os.Args)

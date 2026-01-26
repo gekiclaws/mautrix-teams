@@ -82,6 +82,26 @@ func (f *fakeProfileStore) UpdateDisplayName(teamsUserID string, displayName str
 	return nil
 }
 
+type fakeSendIntentLookup struct {
+	byClientMessageID map[string]*database.TeamsSendIntent
+}
+
+func (f *fakeSendIntentLookup) GetByClientMessageID(clientMessageID string) *database.TeamsSendIntent {
+	if f == nil || f.byClientMessageID == nil {
+		return nil
+	}
+	return f.byClientMessageID[clientMessageID]
+}
+
+type fakeMessageMapWriter struct {
+	entries []*database.TeamsMessageMap
+}
+
+func (f *fakeMessageMapWriter) Upsert(mapping *database.TeamsMessageMap) error {
+	f.entries = append(f.entries, mapping)
+	return nil
+}
+
 func TestIngestThreadFiltersBySequence(t *testing.T) {
 	lister := &fakeMessageLister{
 		messages: []model.RemoteMessage{
@@ -253,6 +273,46 @@ func TestIngestThreadUsesCachedDisplayName(t *testing.T) {
 	}
 	if perMessage["displayname"] != "Cached Name" {
 		t.Fatalf("unexpected per-message display name: %#v", perMessage["displayname"])
+	}
+}
+
+func TestIngestThreadUsesSendIntentMXIDForMessageMap(t *testing.T) {
+	lister := &fakeMessageLister{
+		messages: []model.RemoteMessage{
+			{SequenceID: "1", MessageID: "m1", ClientMessageID: "c1", Body: "one"},
+		},
+	}
+	sender := &fakeMatrixSender{}
+	sendIntents := &fakeSendIntentLookup{
+		byClientMessageID: map[string]*database.TeamsSendIntent{
+			"c1": {MXID: id.EventID("$original")},
+		},
+	}
+	messageMap := &fakeMessageMapWriter{}
+	ingestor := &MessageIngestor{
+		Lister:      lister,
+		Sender:      sender,
+		SendIntents: sendIntents,
+		MessageMap:  messageMap,
+		Log:         zerolog.New(io.Discard),
+	}
+
+	_, advanced, err := ingestor.IngestThread(context.Background(), "thread-1", "@oneToOne.skype", "!room:example", nil)
+	if err != nil {
+		t.Fatalf("IngestThread failed: %v", err)
+	}
+	if !advanced {
+		t.Fatalf("expected advancement on success")
+	}
+	if len(messageMap.entries) != 1 {
+		t.Fatalf("expected one message map entry, got %d", len(messageMap.entries))
+	}
+	entry := messageMap.entries[0]
+	if entry.MXID != "$original" {
+		t.Fatalf("expected original mxid mapping, got %s", entry.MXID)
+	}
+	if entry.ThreadID != "thread-1" || entry.TeamsMessageID != "m1" {
+		t.Fatalf("unexpected mapping: %#v", entry)
 	}
 }
 

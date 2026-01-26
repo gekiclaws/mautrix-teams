@@ -10,6 +10,7 @@ import (
 
 type RemoteMessage struct {
 	MessageID        string
+	ClientMessageID  string
 	SequenceID       string
 	SenderID         string
 	SenderName       string

@@ -23,6 +23,14 @@ type MatrixSender interface {
 	SendText(roomID id.RoomID, body string, extra map[string]any) (id.EventID, error)
 }
 
+type SendIntentLookup interface {
+	GetByClientMessageID(clientMessageID string) *database.TeamsSendIntent
+}
+
+type TeamsMessageMapWriter interface {
+	Upsert(mapping *database.TeamsMessageMap) error
+}
+
 type BotMatrixSender struct {
 	Client *mautrix.Client
 }
@@ -50,10 +58,12 @@ type ProfileStore interface {
 }
 
 type MessageIngestor struct {
-	Lister   MessageLister
-	Sender   MatrixSender
-	Profiles ProfileStore
-	Log      zerolog.Logger
+	Lister      MessageLister
+	Sender      MatrixSender
+	Profiles    ProfileStore
+	SendIntents SendIntentLookup
+	MessageMap  TeamsMessageMapWriter
+	Log         zerolog.Logger
 }
 
 func (m *MessageIngestor) IngestThread(ctx context.Context, threadID string, conversationID string, roomID id.RoomID, lastSequenceID *string) (string, bool, error) {
@@ -165,7 +175,8 @@ func (m *MessageIngestor) IngestThread(ctx context.Context, threadID string, con
 			}
 		}
 
-		if _, err := m.Sender.SendText(roomID, msg.Body, extra); err != nil {
+		eventID, err := m.Sender.SendText(roomID, msg.Body, extra)
+		if err != nil {
 			m.Log.Error().
 				Err(err).
 				Str("thread_id", threadID).
@@ -173,6 +184,27 @@ func (m *MessageIngestor) IngestThread(ctx context.Context, threadID string, con
 				Str("seq", msg.SequenceID).
 				Msg("failed to send matrix message")
 			return "", false, nil
+		}
+
+		maybeMapMXID := eventID
+		if msg.ClientMessageID != "" && m.SendIntents != nil {
+			if intent := m.SendIntents.GetByClientMessageID(msg.ClientMessageID); intent != nil && intent.MXID != "" {
+				maybeMapMXID = intent.MXID
+			}
+		}
+		if m.MessageMap != nil && msg.MessageID != "" && maybeMapMXID != "" {
+			if err := m.MessageMap.Upsert(&database.TeamsMessageMap{
+				MXID:           maybeMapMXID,
+				ThreadID:       threadID,
+				TeamsMessageID: msg.MessageID,
+			}); err != nil {
+				m.Log.Error().
+					Err(err).
+					Str("thread_id", threadID).
+					Str("teams_message_id", msg.MessageID).
+					Str("event_id", maybeMapMXID.String()).
+					Msg("failed to persist teams message map")
+			}
 		}
 
 		m.Log.Info().

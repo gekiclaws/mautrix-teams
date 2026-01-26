@@ -45,7 +45,14 @@ func (portal *TeamsConsumerPortal) ReceiveMatrixEvent(user bridge.User, evt *eve
 	if user.GetPermissionLevel() < bridgeconfig.PermissionLevelUser {
 		return
 	}
-	portal.handleMatrixMessage(user.(*User), evt)
+	switch evt.Type {
+	case event.EventMessage:
+		portal.handleMatrixMessage(user.(*User), evt)
+	case event.EventReaction:
+		portal.handleMatrixReaction(user.(*User), evt)
+	case event.EventRedaction:
+		portal.handleMatrixRedaction(user.(*User), evt)
+	}
 }
 
 func (portal *TeamsConsumerPortal) UpdateBridgeInfo() {}
@@ -79,6 +86,33 @@ func (portal *TeamsConsumerPortal) handleMatrixMessage(sender *User, evt *event.
 	err := portal.bridge.TeamsConsumerSender.SendMatrixText(context.Background(), portal.roomID, content.Body, evt.ID, writer)
 	if err != nil {
 		portal.bridge.ZLog.Warn().Err(err).Str("event_id", evt.ID.String()).Msg("Teams consumer send failed")
+	}
+}
+
+func (portal *TeamsConsumerPortal) handleMatrixReaction(sender *User, evt *event.Event) {
+	if sender == nil || evt == nil {
+		return
+	}
+	if portal.bridge.TeamsConsumerReactor == nil {
+		portal.bridge.ZLog.Warn().Msg("Teams consumer reactor not configured")
+		return
+	}
+
+	if err := portal.bridge.TeamsConsumerReactor.AddMatrixReaction(context.Background(), portal.roomID, evt); err != nil {
+		portal.bridge.ZLog.Warn().Err(err).Str("event_id", evt.ID.String()).Msg("Teams consumer reaction add failed")
+	}
+}
+
+func (portal *TeamsConsumerPortal) handleMatrixRedaction(sender *User, evt *event.Event) {
+	if sender == nil || evt == nil {
+		return
+	}
+	if portal.bridge.TeamsConsumerReactor == nil {
+		portal.bridge.ZLog.Warn().Msg("Teams consumer reactor not configured")
+		return
+	}
+	if err := portal.bridge.TeamsConsumerReactor.RemoveMatrixReaction(context.Background(), portal.roomID, evt); err != nil {
+		portal.bridge.ZLog.Warn().Err(err).Str("event_id", evt.ID.String()).Msg("Teams consumer reaction remove failed")
 	}
 }
 

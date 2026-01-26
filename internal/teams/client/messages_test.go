@@ -21,7 +21,7 @@ func TestListMessagesSuccess(t *testing.T) {
 		gotAuth = append(gotAuth, r.Header.Get("authentication"))
 		gotPath = r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"messages":[{"id":"m1","sequenceId":2,"from":{"id":"u1"},"imdisplayname":"User One","fromDisplayNameInToken":"Token User","createdTime":"2024-01-01T00:00:00Z","content":{"text":"hello"}},{"id":"m2","sequenceId":"1","content":{"text":""}}]}`))
+		_, _ = w.Write([]byte(`{"messages":[{"id":"m1","clientmessageid":"c1","sequenceId":2,"from":{"id":"u1"},"imdisplayname":"User One","fromDisplayNameInToken":"Token User","createdTime":"2024-01-01T00:00:00Z","content":{"text":"hello"}},{"id":"m2","sequenceId":"1","content":{"text":""}}]}`))
 	}))
 	defer server.Close()
 
@@ -52,6 +52,9 @@ func TestListMessagesSuccess(t *testing.T) {
 	}
 	if msgs[0].MessageID != "m2" || msgs[1].MessageID != "m1" {
 		t.Fatalf("unexpected ordering: %#v", msgs)
+	}
+	if msgs[1].ClientMessageID != "c1" {
+		t.Fatalf("unexpected clientmessageid: %q", msgs[1].ClientMessageID)
 	}
 	if msgs[1].SenderID != "u1" {
 		t.Fatalf("unexpected sender id: %q", msgs[1].SenderID)

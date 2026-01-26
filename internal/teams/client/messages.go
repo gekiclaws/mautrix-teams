@@ -44,6 +44,7 @@ func (e SendMessageError) Error() string {
 
 type remoteMessage struct {
 	ID                     string          `json:"id"`
+	ClientMessageID        string          `json:"clientmessageid"`
 	SequenceID             json.RawMessage `json:"sequenceId"`
 	CreatedTime            string          `json:"createdTime"`
 	From                   json.RawMessage `json:"from"`
@@ -90,6 +91,7 @@ func (c *Client) ListMessages(ctx context.Context, conversationID string, sinceS
 		}
 		result = append(result, model.RemoteMessage{
 			MessageID:        msg.ID,
+			ClientMessageID:  msg.ClientMessageID,
 			SequenceID:       sequenceID,
 			SenderID:         senderID,
 			IMDisplayName:    msg.IMDisplayName,

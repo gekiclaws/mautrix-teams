@@ -74,6 +74,7 @@ func (s *TeamsConsumerSender) SendMatrixText(ctx context.Context, roomID id.Room
 		ClientMessageID: clientMessageID,
 		Timestamp:       pendingTS,
 		Status:          database.TeamsSendStatusPending,
+		MXID:            eventID,
 	}
 	if err := s.SendIntents.Insert(intent); err != nil {
 		return err

@@ -25,4 +25,10 @@ func TestUpgradesIncludeTeamsSendIntent(t *testing.T) {
 	if err := db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='teams_send_intent'").Scan(&name); err != nil {
 		t.Fatalf("teams_send_intent table missing: %v", err)
 	}
+	if err := db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='teams_message_map'").Scan(&name); err != nil {
+		t.Fatalf("teams_message_map table missing: %v", err)
+	}
+	if err := db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='teams_reaction_map'").Scan(&name); err != nil {
+		t.Fatalf("teams_reaction_map table missing: %v", err)
+	}
 }

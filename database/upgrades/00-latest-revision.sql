@@ -79,7 +79,20 @@ CREATE TABLE teams_send_intent (
     thread_id TEXT NOT NULL,
     client_message_id TEXT PRIMARY KEY,
     timestamp BIGINT NOT NULL,
-    status TEXT NOT NULL
+    status TEXT NOT NULL,
+    mxid TEXT NOT NULL
+);
+
+CREATE TABLE teams_message_map (
+    mxid TEXT PRIMARY KEY,
+    thread_id TEXT NOT NULL,
+    teams_message_id TEXT NOT NULL
+);
+
+CREATE TABLE teams_reaction_map (
+    reaction_mxid TEXT PRIMARY KEY,
+    target_mxid TEXT NOT NULL,
+    emotion_key TEXT NOT NULL
 );
 
 CREATE TABLE puppet (
