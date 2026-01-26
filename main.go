@@ -127,6 +127,7 @@ func (br *DiscordBridge) Start() {
 	br.WaitWebsocketConnected()
 	go br.startUsers()
 	br.startTeamsConsumerRoomSync()
+	br.startTeamsConsumerMessageSync()
 	br.startTeamsConsumerSender()
 }
 

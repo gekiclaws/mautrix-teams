@@ -11,50 +11,44 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"time"
 
 	"github.com/rs/zerolog"
 	deflog "github.com/rs/zerolog/log"
-	"go.mau.fi/util/dbutil"
 	"go.mau.fi/util/exzerolog"
 	"gopkg.in/yaml.v3"
 	flag "maunium.net/go/mauflag"
-	"maunium.net/go/maulogger/v2/maulogadapt"
-	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/bridge/bridgeconfig"
-	"maunium.net/go/mautrix/id"
 
 	"go.mau.fi/mautrix-teams/config"
-	"go.mau.fi/mautrix-teams/database"
-	teamsbridge "go.mau.fi/mautrix-teams/internal/bridge"
 	"go.mau.fi/mautrix-teams/internal/teams/auth"
-	consumerclient "go.mau.fi/mautrix-teams/internal/teams/client"
 )
 
 var configPath = flag.MakeFull("c", "config", "The path to your config file.", "config.yaml").String()
 var manualMode = flag.MakeFull("m", "manual", "Manual paste mode.", "false").Bool()
 var noBrowser = flag.MakeFull("n", "no-browser", "Do not open a browser automatically.", "false").Bool()
+var noProbe = flag.MakeFull("", "no-probe", "Disable the Teams auth probe sanity check.", "false").Bool()
 
 const probeEndpoint = "https://teams.live.com/api/chatsvc/consumer/v1/users/ME/properties"
 
 func main() {
-	flag.SetHelpTitles("teams-login", "teams-login [-c <path>] [--manual] [--no-browser]")
+	flag.SetHelpTitles("teams-login (auth-only)", "teams-login [-c <path>] [--manual] [--no-browser] [--no-probe]")
 	if err := flag.Parse(); err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, err)
 		flag.PrintHelp()
 		os.Exit(1)
 	}
 
-	cfg, err := loadConfig(*configPath)
-	if err != nil {
-		_, _ = fmt.Fprintln(os.Stderr, "Failed to load config:", err)
-		os.Exit(1)
-	}
+	cfg, cfgErr := loadConfig(*configPath)
 	log, err := setupLogger(cfg)
-	if err != nil {
-		_, _ = fmt.Fprintln(os.Stderr, "Failed to initialize logger:", err)
-		os.Exit(1)
+	if cfgErr != nil || err != nil {
+		log = defaultLogger()
+		if cfgErr != nil {
+			log.Warn().Err(cfgErr).Msg("Failed to load config; falling back to default logger")
+		}
+		if err != nil {
+			log.Warn().Err(err).Msg("Failed to initialize logger from config; using default logger")
+		}
 	}
 
 	stateDir := filepath.Dir(*configPath)
@@ -81,13 +75,10 @@ func main() {
 	now := time.Now().UTC()
 	if savedState != nil && savedState.HasValidSkypeToken(now) {
 		log.Info().Msg("Stored skypetoken is valid")
-		runProbe(ctx, log, client, savedState)
-		if err := runRoomBootstrap(ctx, log, cfg, client, savedState); err != nil {
-			if !isConversationsError(err) {
-				log.Error().Err(err).Msg("Teams room bootstrap failed")
-			}
-			os.Exit(1)
+		if shouldRunProbe(*noProbe) {
+			runProbe(ctx, log, client, savedState)
 		}
+		log.Info().Msg("Authentication complete. Exiting (auth-only mode).")
 		return
 	}
 
@@ -176,13 +167,10 @@ func main() {
 	log.Info().Int64("expires_at", expiresAt).Msg("Skype token acquired")
 
 	log.Info().Msg("Login completed")
-	runProbe(ctx, log, client, state)
-	if err := runRoomBootstrap(ctx, log, cfg, client, state); err != nil {
-		if !isConversationsError(err) {
-			log.Error().Err(err).Msg("Teams room bootstrap failed")
-		}
-		os.Exit(1)
+	if shouldRunProbe(*noProbe) {
+		runProbe(ctx, log, client, state)
 	}
+	log.Info().Msg("Authentication complete. Exiting (auth-only mode).")
 }
 
 func loadConfig(path string) (*config.Config, error) {
@@ -198,6 +186,9 @@ func loadConfig(path string) (*config.Config, error) {
 }
 
 func setupLogger(cfg *config.Config) (*zerolog.Logger, error) {
+	if cfg == nil {
+		return nil, errors.New("missing config")
+	}
 	log, err := cfg.Logging.Compile()
 	if err != nil {
 		return nil, err
@@ -206,6 +197,15 @@ func setupLogger(cfg *config.Config) (*zerolog.Logger, error) {
 	zerolog.CallerMarshalFunc = exzerolog.CallerWithFunctionName
 	deflog.Logger = log.With().Bool("global_log", true).Caller().Logger()
 	return log, nil
+}
+
+func defaultLogger() *zerolog.Logger {
+	log := zerolog.New(os.Stdout).With().Timestamp().Bool("global_log", true).Logger()
+	return &log
+}
+
+func shouldRunProbe(disabled bool) bool {
+	return !disabled
 }
 
 func randomState() (string, error) {
@@ -264,94 +264,4 @@ func runProbe(ctx context.Context, log *zerolog.Logger, client *auth.Client, sta
 			Str("body_snippet", result.BodySnippet).
 			Msg("Teams probe response")
 	}
-}
-
-func runRoomBootstrap(ctx context.Context, log *zerolog.Logger, cfg *config.Config, authClient *auth.Client, state *auth.AuthState) error {
-	if state == nil || !state.HasValidSkypeToken(time.Now().UTC()) {
-		return errors.New("missing or expired skypetoken")
-	}
-	if cfg == nil || cfg.BaseConfig == nil {
-		return errors.New("missing config")
-	}
-
-	dbConfig := cfg.AppService.Database
-	db, err := dbutil.NewFromConfig("mautrix-teams", dbConfig, dbutil.ZeroLogger(log.With().Str("db_section", "main").Logger()))
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-
-	teamsDB := database.New(db, maulogadapt.ZeroAsMau(log).Sub("Database"))
-	if err := teamsDB.Upgrade(); err != nil {
-		return err
-	}
-
-	store := teamsbridge.NewTeamsThreadStore(teamsDB)
-	store.LoadAll()
-
-	botMXID := id.UserID(fmt.Sprintf("@%s:%s", cfg.AppService.Bot.Username, cfg.Homeserver.Domain))
-	client, err := mautrix.NewClient(cfg.Homeserver.Address, botMXID, cfg.AppService.ASToken)
-	if err != nil {
-		return err
-	}
-	client.SetAppServiceUserID = true
-	client.Log = *log
-	client.Logger = maulogadapt.ZeroAsMau(&client.Log)
-	creator := teamsbridge.NewClientRoomCreator(client, &cfg.Bridge)
-	rooms := teamsbridge.NewRoomsService(store, creator, *log)
-
-	consumer := consumerclient.NewClient(authClient.HTTP)
-	consumer.Token = state.SkypeToken
-	consumer.Log = log
-	if err := teamsbridge.DiscoverAndEnsureRooms(ctx, state.SkypeToken, consumer, rooms, *log); err != nil {
-		return err
-	}
-
-	ingestor := teamsbridge.MessageIngestor{
-		Lister:      consumer,
-		Sender:      &teamsbridge.BotMatrixSender{Client: client},
-		Profiles:    teamsDB.TeamsProfile,
-		SendIntents: teamsDB.TeamsSendIntent,
-		MessageMap:  teamsDB.TeamsMessageMap,
-		ReactionIngestor: &teamsbridge.TeamsReactionIngestor{
-			Sender:    &teamsbridge.BotMatrixReactionSender{Client: client},
-			Messages:  teamsDB.TeamsMessageMap,
-			Reactions: teamsDB.TeamsReaction,
-			Log:       *log,
-		},
-		Log: *log,
-	}
-	syncer := teamsbridge.ThreadSyncer{
-		Ingestor: &ingestor,
-		Store:    teamsDB.TeamsThread,
-		Log:      *log,
-	}
-
-	for _, thread := range teamsDB.TeamsThread.GetAll() {
-		if thread == nil {
-			continue
-		}
-		if thread.RoomID == "" {
-			log.Debug().
-				Str("thread_id", thread.ThreadID).
-				Msg("skipping message ingestion without room")
-			continue
-		}
-		if !strings.HasSuffix(thread.ThreadID, "@thread.v2") {
-			log.Debug().
-				Str("thread_id", thread.ThreadID).
-				Msg("skipping non-v2 thread")
-			continue
-		}
-		if err := syncer.SyncThread(ctx, thread); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func isConversationsError(err error) bool {
-	var convErr consumerclient.ConversationsError
-	return errors.As(err, &convErr)
 }
