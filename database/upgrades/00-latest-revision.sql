@@ -1,4 +1,4 @@
--- v0 -> v25 (compatible with v19+): Latest revision
+-- v0 -> v28 (compatible with v19+): Latest revision
 
 CREATE TABLE guild (
     dcid       TEXT PRIMARY KEY,
@@ -73,6 +73,13 @@ CREATE TABLE teams_profile (
     teams_user_id TEXT PRIMARY KEY,
     display_name TEXT NOT NULL,
     last_seen_ts BIGINT NOT NULL
+);
+
+CREATE TABLE teams_send_intent (
+    thread_id TEXT NOT NULL,
+    client_message_id TEXT PRIMARY KEY,
+    timestamp BIGINT NOT NULL,
+    status TEXT NOT NULL
 );
 
 CREATE TABLE puppet (

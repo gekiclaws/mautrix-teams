@@ -32,6 +32,7 @@ type Client struct {
 	HTTP             *http.Client
 	ConversationsURL string
 	MessagesURL      string
+	SendMessagesURL  string
 	Token            string
 	Log              *zerolog.Logger
 }
@@ -40,6 +41,7 @@ func NewClient(httpClient *http.Client) *Client {
 	return &Client{
 		HTTP:             httpClient,
 		ConversationsURL: defaultConversationsURL,
+		SendMessagesURL:  defaultSendMessagesURL,
 	}
 }
 

@@ -44,12 +44,54 @@ func (br *DiscordBridge) runTeamsConsumerRoomSync(ctx context.Context, log zerol
 	authClient.Log = &log
 
 	consumer := consumerclient.NewClient(authClient.HTTP)
-	store := teamsbridge.NewTeamsThreadStore(br.DB)
+	store := br.ensureTeamsThreadStore()
 	store.LoadAll()
 	creator := teamsbridge.NewIntentRoomCreator(br.Bot, &br.Config.Bridge)
 	rooms := teamsbridge.NewRoomsService(store, creator, log)
 
 	return teamsbridge.DiscoverAndEnsureRooms(ctx, state.SkypeToken, consumer, rooms, log)
+}
+
+func (br *DiscordBridge) startTeamsConsumerSender() {
+	log := br.ZLog.With().Str("component", "teams-consumer-send").Logger()
+	if err := br.initTeamsConsumerSender(log); err != nil {
+		log.Warn().Err(err).Msg("Teams consumer sender unavailable")
+	}
+}
+
+func (br *DiscordBridge) initTeamsConsumerSender(log zerolog.Logger) error {
+	if br.ConfigPath == "" {
+		return errors.New("missing config path")
+	}
+	state, cookieStore, err := loadTeamsConsumerAuth(br.ConfigPath)
+	if err != nil {
+		return err
+	}
+	if state == nil || !state.HasValidSkypeToken(time.Now().UTC()) {
+		return errors.New("missing or expired skypetoken")
+	}
+	if state.TeamsUserID == "" {
+		return errors.New("missing teams user id")
+	}
+
+	authClient := auth.NewClient(cookieStore)
+	authClient.Log = &log
+
+	consumer := consumerclient.NewClient(authClient.HTTP)
+	consumer.Token = state.SkypeToken
+	consumer.Log = &log
+
+	store := br.ensureTeamsThreadStore()
+	store.LoadAll()
+	br.TeamsConsumerSender = teamsbridge.NewTeamsConsumerSender(consumer, br.DB.TeamsSendIntent, store, state.TeamsUserID, log)
+	return nil
+}
+
+func (br *DiscordBridge) ensureTeamsThreadStore() *teamsbridge.TeamsThreadStore {
+	if br.TeamsThreadStore == nil {
+		br.TeamsThreadStore = teamsbridge.NewTeamsThreadStore(br.DB)
+	}
+	return br.TeamsThreadStore
 }
 
 func loadTeamsConsumerAuth(configPath string) (*auth.AuthState, *auth.CookieStore, error) {

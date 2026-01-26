@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -18,6 +19,7 @@ type AuthState struct {
 
 	SkypeToken          string `json:"skype_token,omitempty"`
 	SkypeTokenExpiresAt int64  `json:"skype_token_expires_at,omitempty"`
+	TeamsUserID         string `json:"teams_user_id,omitempty"`
 }
 
 func (a *AuthState) Expiry() time.Time {
@@ -86,6 +88,17 @@ func (a *AuthState) hasAnyToken() bool {
 		return false
 	}
 	return a.AccessToken != "" || a.RefreshToken != "" || a.IDToken != "" || a.SkypeToken != ""
+}
+
+func NormalizeTeamsUserID(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+	if strings.HasPrefix(trimmed, "8:") {
+		return trimmed
+	}
+	return "8:" + trimmed
 }
 
 func writeFileAtomic(path string, data []byte, perm os.FileMode) error {

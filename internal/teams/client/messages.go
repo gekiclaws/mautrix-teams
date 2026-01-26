@@ -1,20 +1,26 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"go.mau.fi/mautrix-teams/internal/teams/model"
 )
 
 const defaultMessagesURL = "https://msgapi.teams.live.com/v1/users/ME/conversations"
+const defaultSendMessagesURL = "https://teams.live.com/api/chatsvc/consumer/v1/users/ME/conversations"
 
 var ErrMissingToken = errors.New("consumer client missing skypetoken")
 
@@ -25,6 +31,15 @@ type MessagesError struct {
 
 func (e MessagesError) Error() string {
 	return "messages request failed"
+}
+
+type SendMessageError struct {
+	Status      int
+	BodySnippet string
+}
+
+func (e SendMessageError) Error() string {
+	return "send message request failed"
 }
 
 type remoteMessage struct {
@@ -89,6 +104,113 @@ func (c *Client) ListMessages(ctx context.Context, conversationID string, sinceS
 	})
 
 	return result, nil
+}
+
+var sendMessageCounter uint64
+
+func GenerateClientMessageID() string {
+	now := uint64(time.Now().UTC().UnixNano())
+	for {
+		prev := atomic.LoadUint64(&sendMessageCounter)
+		if now <= prev {
+			now = prev + 1
+		}
+		if atomic.CompareAndSwapUint64(&sendMessageCounter, prev, now) {
+			return strconv.FormatUint(now, 10)
+		}
+	}
+}
+
+func (c *Client) SendMessage(ctx context.Context, threadID string, text string, fromUserID string) (string, error) {
+	clientMessageID := GenerateClientMessageID()
+	_, err := c.SendMessageWithID(ctx, threadID, text, fromUserID, clientMessageID)
+	return clientMessageID, err
+}
+
+func (c *Client) SendMessageWithID(ctx context.Context, threadID string, text string, fromUserID string, clientMessageID string) (int, error) {
+	if c == nil || c.HTTP == nil {
+		return 0, ErrMissingHTTPClient
+	}
+	if c.Token == "" {
+		return 0, ErrMissingToken
+	}
+	threadID = strings.TrimSpace(threadID)
+	if threadID == "" {
+		return 0, errors.New("missing thread id")
+	}
+	if strings.TrimSpace(text) == "" {
+		return 0, errors.New("missing message text")
+	}
+	if strings.TrimSpace(fromUserID) == "" {
+		return 0, errors.New("missing from user id")
+	}
+	if clientMessageID == "" {
+		return 0, errors.New("missing client message id")
+	}
+
+	if !strings.Contains(threadID, "@thread.v2") && c.Log != nil {
+		c.Log.Warn().
+			Str("thread_id", threadID).
+			Msg("teams thread id missing @thread.v2")
+	}
+
+	baseURL := c.SendMessagesURL
+	if baseURL == "" {
+		baseURL = defaultSendMessagesURL
+	}
+	baseURL = strings.TrimSuffix(baseURL, "/")
+	messagesURL := fmt.Sprintf("%s/%s/messages", baseURL, url.PathEscape(threadID))
+
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	payload := map[string]string{
+		"type":                "Message",
+		"conversationid":      threadID,
+		"content":             formatHTMLContent(text),
+		"messagetype":         "RichText/Html",
+		"contenttype":         "Text",
+		"clientmessageid":     clientMessageID,
+		"composetime":         now,
+		"originalarrivaltime": now,
+		"from":                fromUserID,
+		"fromUserId":          fromUserID,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return 0, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, messagesURL, bytes.NewReader(body))
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("authentication", "skypetoken="+c.Token)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	c.debugRequest("teams send message request", messagesURL, req)
+
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
+		return resp.StatusCode, SendMessageError{
+			Status:      resp.StatusCode,
+			BodySnippet: string(snippet),
+		}
+	}
+
+	return resp.StatusCode, nil
+}
+
+func formatHTMLContent(text string) string {
+	normalized := strings.ReplaceAll(text, "\r\n", "\n")
+	normalized = strings.ReplaceAll(normalized, "\r", "\n")
+	escaped := html.EscapeString(normalized)
+	escaped = strings.ReplaceAll(escaped, "\n", "<br>")
+	return "<p>" + escaped + "</p>"
 }
 
 func normalizeSequenceID(value json.RawMessage) (string, error) {

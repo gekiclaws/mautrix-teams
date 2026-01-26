@@ -15,7 +15,7 @@ func TestAcquireSkypeTokenSuccess(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"skypeToken":{"skypetoken":"jwt","expiresIn":10}}`))
+		_, _ = w.Write([]byte(`{"skypeToken":{"skypetoken":"jwt","expiresIn":10,"skypeid":"live:tester"}}`))
 	}))
 	defer server.Close()
 
@@ -23,12 +23,15 @@ func TestAcquireSkypeTokenSuccess(t *testing.T) {
 	client.SkypeTokenEndpoint = server.URL
 
 	start := time.Now().UTC()
-	token, expiresAt, err := client.AcquireSkypeToken(context.Background(), "msal")
+	token, expiresAt, skypeID, err := client.AcquireSkypeToken(context.Background(), "msal")
 	if err != nil {
 		t.Fatalf("AcquireSkypeToken failed: %v", err)
 	}
 	if token != "jwt" {
 		t.Fatalf("unexpected token: %s", token)
+	}
+	if skypeID != "live:tester" {
+		t.Fatalf("unexpected skype id: %s", skypeID)
 	}
 	minExpiry := start.Add(10 * time.Second).Unix()
 	maxExpiry := time.Now().UTC().Add(12 * time.Second).Unix()
@@ -51,7 +54,7 @@ func TestAcquireSkypeTokenMissingToken(t *testing.T) {
 	client := NewClient(nil)
 	client.SkypeTokenEndpoint = server.URL
 
-	_, _, err := client.AcquireSkypeToken(context.Background(), "msal")
+	_, _, _, err := client.AcquireSkypeToken(context.Background(), "msal")
 	if err == nil {
 		t.Fatalf("expected error for missing token")
 	}
@@ -67,7 +70,7 @@ func TestAcquireSkypeTokenNon2xx(t *testing.T) {
 	client := NewClient(nil)
 	client.SkypeTokenEndpoint = server.URL
 
-	_, _, err := client.AcquireSkypeToken(context.Background(), "msal")
+	_, _, _, err := client.AcquireSkypeToken(context.Background(), "msal")
 	if err == nil {
 		t.Fatalf("expected error for non-2xx")
 	}
@@ -77,7 +80,7 @@ func TestAcquireSkypeTokenMissingAccessToken(t *testing.T) {
 	client := NewClient(nil)
 	client.SkypeTokenEndpoint = "https://example.invalid"
 
-	_, _, err := client.AcquireSkypeToken(context.Background(), "")
+	_, _, _, err := client.AcquireSkypeToken(context.Background(), "")
 	if err == nil {
 		t.Fatalf("expected error for missing access token")
 	}

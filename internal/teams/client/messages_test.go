@@ -2,9 +2,11 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -206,6 +208,103 @@ func TestListMessagesFromVariants(t *testing.T) {
 	}
 	if msgs[3].SenderName != "" {
 		t.Fatalf("expected empty sender name for malformed from")
+	}
+}
+
+func TestSendMessageSuccess(t *testing.T) {
+	var gotPath string
+	var gotAuth string
+	var gotContentType string
+	var gotAccept string
+	var payload map[string]string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAuth = r.Header.Get("authentication")
+		gotContentType = r.Header.Get("Content-Type")
+		gotAccept = r.Header.Get("Accept")
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client())
+	client.SendMessagesURL = server.URL + "/conversations"
+	client.Token = "token123"
+
+	threadID := "@19:abc@thread.v2"
+	clientMessageID, err := client.SendMessage(context.Background(), threadID, "Hello <world>\nLine", "8:live:me")
+	if err != nil {
+		t.Fatalf("SendMessage failed: %v", err)
+	}
+	if gotPath != "/conversations/%4019%3Aabc%40thread.v2/messages" {
+		t.Fatalf("unexpected path: %q", gotPath)
+	}
+	if gotAuth != "skypetoken=token123" {
+		t.Fatalf("unexpected authentication header: %q", gotAuth)
+	}
+	if gotContentType != "application/json" {
+		t.Fatalf("unexpected content type: %q", gotContentType)
+	}
+	if gotAccept != "application/json" {
+		t.Fatalf("unexpected accept header: %q", gotAccept)
+	}
+	if payload["type"] != "Message" {
+		t.Fatalf("unexpected type: %q", payload["type"])
+	}
+	if payload["conversationid"] != threadID {
+		t.Fatalf("unexpected conversationid: %q", payload["conversationid"])
+	}
+	if payload["content"] != "<p>Hello &lt;world&gt;<br>Line</p>" {
+		t.Fatalf("unexpected content: %q", payload["content"])
+	}
+	if payload["messagetype"] != "RichText/Html" {
+		t.Fatalf("unexpected messagetype: %q", payload["messagetype"])
+	}
+	if payload["contenttype"] != "Text" {
+		t.Fatalf("unexpected contenttype: %q", payload["contenttype"])
+	}
+	if payload["from"] != "8:live:me" || payload["fromUserId"] != "8:live:me" {
+		t.Fatalf("unexpected from fields: %q %q", payload["from"], payload["fromUserId"])
+	}
+	if payload["composetime"] == "" || payload["composetime"] != payload["originalarrivaltime"] {
+		t.Fatalf("unexpected compose/original arrival time: %q %q", payload["composetime"], payload["originalarrivaltime"])
+	}
+	if payload["clientmessageid"] != clientMessageID {
+		t.Fatalf("clientmessageid mismatch: %q vs %q", payload["clientmessageid"], clientMessageID)
+	}
+	if !regexp.MustCompile(`^[0-9]+$`).MatchString(clientMessageID) {
+		t.Fatalf("clientmessageid is not numeric: %q", clientMessageID)
+	}
+}
+
+func TestSendMessageNon2xx(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte("nope"))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client())
+	client.SendMessagesURL = server.URL + "/conversations"
+	client.Token = "token123"
+
+	_, err := client.SendMessage(context.Background(), "@19:abc@thread.v2", "hello", "8:live:me")
+	if err == nil {
+		t.Fatalf("expected error for non-2xx")
+	}
+	var sendErr SendMessageError
+	if !errors.As(err, &sendErr) {
+		t.Fatalf("expected SendMessageError, got %T", err)
+	}
+	if sendErr.Status != http.StatusBadRequest {
+		t.Fatalf("unexpected status: %d", sendErr.Status)
+	}
+	if sendErr.BodySnippet == "" {
+		t.Fatalf("expected body snippet")
 	}
 }
 

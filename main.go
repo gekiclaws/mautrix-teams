@@ -35,6 +35,7 @@ import (
 
 	"go.mau.fi/mautrix-teams/config"
 	"go.mau.fi/mautrix-teams/database"
+	teamsbridge "go.mau.fi/mautrix-teams/internal/bridge"
 	"go.mau.fi/mautrix-teams/teams"
 	teamsauth "go.mau.fi/mautrix-teams/teams/auth"
 	"go.mau.fi/mautrix-teams/teams/poll"
@@ -86,6 +87,9 @@ type DiscordBridge struct {
 
 	attachmentTransfers         *exsync.Map[attachmentKey, *exsync.ReturnableOnce[*database.File]]
 	parallelAttachmentSemaphore *semaphore.Weighted
+
+	TeamsThreadStore    *teamsbridge.TeamsThreadStore
+	TeamsConsumerSender *teamsbridge.TeamsConsumerSender
 }
 
 func (br *DiscordBridge) GetExampleConfig() string {
@@ -122,6 +126,7 @@ func (br *DiscordBridge) Start() {
 	br.WaitWebsocketConnected()
 	go br.startUsers()
 	br.startTeamsConsumerRoomSync()
+	br.startTeamsConsumerSender()
 }
 
 func (br *DiscordBridge) Stop() {
@@ -138,7 +143,13 @@ func (br *DiscordBridge) Stop() {
 func (br *DiscordBridge) GetIPortal(mxid id.RoomID) bridge.Portal {
 	p := br.GetPortalByMXID(mxid)
 	if p == nil {
-		return nil
+		if br.TeamsConsumerSender == nil || br.TeamsThreadStore == nil {
+			return nil
+		}
+		if _, ok := br.TeamsThreadStore.GetThreadID(mxid); !ok {
+			return nil
+		}
+		return &TeamsConsumerPortal{bridge: br, roomID: mxid}
 	}
 	return p
 }
@@ -169,6 +180,9 @@ func (br *DiscordBridge) CreatePrivatePortal(id id.RoomID, user bridge.User, gho
 }
 
 func main() {
+	if handled, exitCode := runDevSendIfRequested(os.Args[1:]); handled {
+		os.Exit(exitCode)
+	}
 	runTeamsAuthTestIfRequested(os.Args)
 	runTeamsPollTestIfRequested(os.Args)
 	br := &DiscordBridge{

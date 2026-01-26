@@ -15,17 +15,18 @@ import (
 type Database struct {
 	*dbutil.Database
 
-	User         *UserQuery
-	Portal       *PortalQuery
-	Puppet       *PuppetQuery
-	Message      *MessageQuery
-	Thread       *ThreadQuery
-	Reaction     *ReactionQuery
-	Guild        *GuildQuery
-	Role         *RoleQuery
-	File         *FileQuery
-	TeamsThread  *TeamsThreadQuery
-	TeamsProfile *TeamsProfileQuery
+	User            *UserQuery
+	Portal          *PortalQuery
+	Puppet          *PuppetQuery
+	Message         *MessageQuery
+	Thread          *ThreadQuery
+	Reaction        *ReactionQuery
+	Guild           *GuildQuery
+	Role            *RoleQuery
+	File            *FileQuery
+	TeamsThread     *TeamsThreadQuery
+	TeamsProfile    *TeamsProfileQuery
+	TeamsSendIntent *TeamsSendIntentQuery
 }
 
 func New(baseDB *dbutil.Database, log maulogger.Logger) *Database {
@@ -74,6 +75,10 @@ func New(baseDB *dbutil.Database, log maulogger.Logger) *Database {
 	db.TeamsProfile = &TeamsProfileQuery{
 		db:  db,
 		log: log.Sub("TeamsProfile"),
+	}
+	db.TeamsSendIntent = &TeamsSendIntentQuery{
+		db:  db,
+		log: log.Sub("TeamsSendIntent"),
 	}
 	return db
 }

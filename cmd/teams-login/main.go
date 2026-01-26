@@ -151,10 +151,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	token, expiresAt, err := client.AcquireSkypeToken(ctx, state.AccessToken)
+	token, expiresAt, skypeID, err := client.AcquireSkypeToken(ctx, state.AccessToken)
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to acquire skypetoken")
 		os.Exit(1)
+	}
+	normalizedUserID := auth.NormalizeTeamsUserID(skypeID)
+	if normalizedUserID == "" && savedState != nil {
+		normalizedUserID = savedState.TeamsUserID
+	}
+	if normalizedUserID != "" {
+		state.TeamsUserID = normalizedUserID
 	}
 	state.SkypeToken = token
 	state.SkypeTokenExpiresAt = expiresAt
