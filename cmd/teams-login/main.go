@@ -103,7 +103,9 @@ func main() {
 			manual = true
 			log.Warn().Err(err).Msg("Failed to start helper listener; falling back to manual mode")
 		} else {
-			log.Info().Msgf("Helper page available at %s", helper.URL)
+			log.Info().
+				Str("helper_url", helper.URL).
+				Msg("Helper page available")
 		}
 	}
 
