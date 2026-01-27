@@ -28,11 +28,13 @@ func (e MessagesError) Error() string {
 }
 
 type remoteMessage struct {
-	ID          string          `json:"id"`
-	SequenceID  json.RawMessage `json:"sequenceId"`
-	CreatedTime string          `json:"createdTime"`
-	From        json.RawMessage `json:"from"`
-	Content     json.RawMessage `json:"content"`
+	ID                     string          `json:"id"`
+	SequenceID             json.RawMessage `json:"sequenceId"`
+	CreatedTime            string          `json:"createdTime"`
+	From                   json.RawMessage `json:"from"`
+	IMDisplayName          string          `json:"imdisplayname"`
+	FromDisplayNameInToken string          `json:"fromDisplayNameInToken"`
+	Content                json.RawMessage `json:"content"`
 }
 
 func (c *Client) ListMessages(ctx context.Context, conversationID string, sinceSequence string) ([]model.RemoteMessage, error) {
@@ -65,18 +67,20 @@ func (c *Client) ListMessages(ctx context.Context, conversationID string, sinceS
 		if err != nil {
 			return nil, err
 		}
-		senderID := model.ExtractSenderID(msg.From)
+		senderID := model.NormalizeTeamsUserID(model.ExtractSenderID(msg.From))
 		if senderID == "" && c.Log != nil {
 			c.Log.Debug().
 				Str("message_id", msg.ID).
 				Msg("teams message missing sender id")
 		}
 		result = append(result, model.RemoteMessage{
-			MessageID:  msg.ID,
-			SequenceID: sequenceID,
-			SenderID:   senderID,
-			Timestamp:  model.ParseTimestamp(msg.CreatedTime),
-			Body:       model.ExtractBody(msg.Content),
+			MessageID:        msg.ID,
+			SequenceID:       sequenceID,
+			SenderID:         senderID,
+			IMDisplayName:    msg.IMDisplayName,
+			TokenDisplayName: msg.FromDisplayNameInToken,
+			Timestamp:        model.ParseTimestamp(msg.CreatedTime),
+			Body:             model.ExtractBody(msg.Content),
 		})
 	}
 

@@ -9,11 +9,14 @@ import (
 )
 
 type RemoteMessage struct {
-	MessageID  string
-	SequenceID string
-	SenderID   string
-	Timestamp  time.Time
-	Body       string
+	MessageID        string
+	SequenceID       string
+	SenderID         string
+	SenderName       string
+	IMDisplayName    string
+	TokenDisplayName string
+	Timestamp        time.Time
+	Body             string
 }
 
 func ExtractBody(content json.RawMessage) string {
@@ -53,6 +56,31 @@ func ExtractSenderID(raw json.RawMessage) string {
 	return ""
 }
 
+func ExtractSenderName(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var plain string
+	if err := json.Unmarshal(raw, &plain); err == nil {
+		return ""
+	}
+	var obj struct {
+		DisplayName string `json:"displayName"`
+		Name        string `json:"name"`
+	}
+	if err := json.Unmarshal(raw, &obj); err == nil {
+		if obj.DisplayName != "" {
+			return obj.DisplayName
+		}
+		return obj.Name
+	}
+	return ""
+}
+
+func NormalizeTeamsUserID(value string) string {
+	return strings.TrimSpace(value)
+}
+
 func ParseTimestamp(value string) time.Time {
 	if value == "" {
 		return time.Time{}
@@ -66,6 +94,13 @@ func ParseTimestamp(value string) time.Time {
 		return ts
 	}
 	return time.Time{}
+}
+
+func ChooseLastSeenTS(messageTS time.Time, now time.Time) time.Time {
+	if !messageTS.IsZero() {
+		return messageTS.UTC()
+	}
+	return now.UTC()
 }
 
 func CompareSequenceID(a, b string) int {

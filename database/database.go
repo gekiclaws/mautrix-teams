@@ -5,8 +5,8 @@ import (
 
 	_ "github.com/lib/pq"
 	_ "github.com/mattn/go-sqlite3"
-	_ "go.mau.fi/util/dbutil/litestream"
 	"go.mau.fi/util/dbutil"
+	_ "go.mau.fi/util/dbutil/litestream"
 	"maunium.net/go/maulogger/v2"
 
 	"go.mau.fi/mautrix-teams/database/upgrades"
@@ -15,16 +15,17 @@ import (
 type Database struct {
 	*dbutil.Database
 
-	User     *UserQuery
-	Portal   *PortalQuery
-	Puppet   *PuppetQuery
-	Message  *MessageQuery
-	Thread   *ThreadQuery
-	Reaction *ReactionQuery
-	Guild    *GuildQuery
-	Role     *RoleQuery
-	File     *FileQuery
-	TeamsThread *TeamsThreadQuery
+	User         *UserQuery
+	Portal       *PortalQuery
+	Puppet       *PuppetQuery
+	Message      *MessageQuery
+	Thread       *ThreadQuery
+	Reaction     *ReactionQuery
+	Guild        *GuildQuery
+	Role         *RoleQuery
+	File         *FileQuery
+	TeamsThread  *TeamsThreadQuery
+	TeamsProfile *TeamsProfileQuery
 }
 
 func New(baseDB *dbutil.Database, log maulogger.Logger) *Database {
@@ -69,6 +70,10 @@ func New(baseDB *dbutil.Database, log maulogger.Logger) *Database {
 	db.TeamsThread = &TeamsThreadQuery{
 		db:  db,
 		log: log.Sub("TeamsThread"),
+	}
+	db.TeamsProfile = &TeamsProfileQuery{
+		db:  db,
+		log: log.Sub("TeamsProfile"),
 	}
 	return db
 }
