@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 
 	"maunium.net/go/mautrix/appservice"
 	"maunium.net/go/mautrix/bridge"
@@ -91,6 +92,24 @@ func (portal *TeamsConsumerPortal) HandleMatrixTyping(newTyping []id.UserID) {
 		if err := typer.SendTyping(context.Background(), portal.roomID); err != nil {
 			portal.bridge.ZLog.Warn().Err(err).Str("room_id", portal.roomID.String()).Msg("Teams consumer typing failed")
 		}
+	}
+}
+
+func (portal *TeamsConsumerPortal) HandleMatrixReadReceipt(brUser bridge.User, eventID id.EventID, receipt event.ReadReceipt) {
+	if portal == nil || portal.bridge == nil {
+		return
+	}
+	sender := portal.bridge.TeamsConsumerReceipt
+	if sender == nil {
+		return
+	}
+	if err := sender.SendReadReceipt(context.Background(), portal.roomID, time.Now().UTC()); err != nil {
+		portal.bridge.ZLog.Warn().
+			Err(err).
+			Str("room_id", portal.roomID.String()).
+			Str("event_id", eventID.String()).
+			Str("sender", brUser.GetMXID().String()).
+			Msg("Teams consumer read receipt failed")
 	}
 }
 

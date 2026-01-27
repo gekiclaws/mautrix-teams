@@ -31,6 +31,10 @@ type TeamsMessageMapWriter interface {
 	Upsert(mapping *database.TeamsMessageMap) error
 }
 
+type UnreadTracker interface {
+	MarkUnread(roomID id.RoomID)
+}
+
 type BotMatrixSender struct {
 	Client *mautrix.Client
 }
@@ -64,6 +68,7 @@ type MessageIngestor struct {
 	SendIntents      SendIntentLookup
 	MessageMap       TeamsMessageMapWriter
 	ReactionIngestor MessageReactionIngestor
+	UnreadTracker    UnreadTracker
 	Log              zerolog.Logger
 }
 
@@ -218,6 +223,10 @@ func (m *MessageIngestor) IngestThread(ctx context.Context, threadID string, con
 			}
 			messagesIngested++
 			maybeMapMXID = eventID
+			// Only inbound messages should mark the room unread. Send-intent echoes are excluded.
+			if m.UnreadTracker != nil {
+				m.UnreadTracker.MarkUnread(roomID)
+			}
 		} else {
 			m.Log.Debug().
 				Str("thread_id", threadID).
