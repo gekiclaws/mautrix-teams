@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"sync"
 
 	"maunium.net/go/mautrix/appservice"
 	"maunium.net/go/mautrix/bridge"
@@ -16,6 +17,9 @@ import (
 type TeamsConsumerPortal struct {
 	bridge *DiscordBridge
 	roomID id.RoomID
+
+	currentlyTyping     []id.UserID
+	currentlyTypingLock sync.Mutex
 }
 
 func (portal *TeamsConsumerPortal) IsEncrypted() bool {
@@ -56,6 +60,39 @@ func (portal *TeamsConsumerPortal) ReceiveMatrixEvent(user bridge.User, evt *eve
 }
 
 func (portal *TeamsConsumerPortal) UpdateBridgeInfo() {}
+
+func teamsTypingDiff(prev, new []id.UserID) (started []id.UserID) {
+OuterNew:
+	for _, userID := range new {
+		for _, previousUserID := range prev {
+			if userID == previousUserID {
+				continue OuterNew
+			}
+		}
+		started = append(started, userID)
+	}
+	return
+}
+
+func (portal *TeamsConsumerPortal) HandleMatrixTyping(newTyping []id.UserID) {
+	if portal == nil || portal.bridge == nil {
+		return
+	}
+	portal.currentlyTypingLock.Lock()
+	startedTyping := teamsTypingDiff(portal.currentlyTyping, newTyping)
+	portal.currentlyTyping = newTyping
+	portal.currentlyTypingLock.Unlock()
+
+	typer := portal.bridge.TeamsConsumerTyper
+	if typer == nil {
+		return
+	}
+	for range startedTyping {
+		if err := typer.SendTyping(context.Background(), portal.roomID); err != nil {
+			portal.bridge.ZLog.Warn().Err(err).Str("room_id", portal.roomID.String()).Msg("Teams consumer typing failed")
+		}
+	}
+}
 
 func (portal *TeamsConsumerPortal) handleMatrixMessage(sender *User, evt *event.Event) {
 	if sender == nil || evt == nil {

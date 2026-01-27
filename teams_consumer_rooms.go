@@ -373,6 +373,7 @@ func (br *DiscordBridge) initTeamsConsumerSender(log zerolog.Logger) error {
 	store.LoadAll()
 	br.TeamsConsumerSender = teamsbridge.NewTeamsConsumerSender(consumer, br.DB.TeamsSendIntent, store, state.TeamsUserID, log)
 	br.TeamsConsumerReactor = teamsbridge.NewTeamsConsumerReactor(consumer, store, br.DB.TeamsMessageMap, br.DB.TeamsReactionMap, log)
+	br.TeamsConsumerTyper = teamsbridge.NewTeamsConsumerTyper(consumer, store, state.TeamsUserID, log)
 	return nil
 }
 
