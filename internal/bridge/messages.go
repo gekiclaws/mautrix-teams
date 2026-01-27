@@ -197,23 +197,34 @@ func (m *MessageIngestor) IngestThread(ctx context.Context, threadID string, con
 			}
 		}
 
-		eventID, err := m.Sender.SendText(roomID, msg.Body, extra)
-		if err != nil {
-			m.Log.Error().
-				Err(err).
-				Str("thread_id", threadID).
-				Str("room_id", roomID.String()).
-				Str("seq", msg.SequenceID).
-				Msg("failed to send matrix message")
-			return IngestResult{}, nil
-		}
-		messagesIngested++
-
-		maybeMapMXID := eventID
+		var intentMXID id.EventID
 		if msg.ClientMessageID != "" && m.SendIntents != nil {
 			if intent := m.SendIntents.GetByClientMessageID(msg.ClientMessageID); intent != nil && intent.MXID != "" {
-				maybeMapMXID = intent.MXID
+				intentMXID = intent.MXID
 			}
+		}
+
+		maybeMapMXID := intentMXID
+		if maybeMapMXID == "" {
+			eventID, err := m.Sender.SendText(roomID, msg.Body, extra)
+			if err != nil {
+				m.Log.Error().
+					Err(err).
+					Str("thread_id", threadID).
+					Str("room_id", roomID.String()).
+					Str("seq", msg.SequenceID).
+					Msg("failed to send matrix message")
+				return IngestResult{}, nil
+			}
+			messagesIngested++
+			maybeMapMXID = eventID
+		} else {
+			m.Log.Debug().
+				Str("thread_id", threadID).
+				Str("seq", msg.SequenceID).
+				Str("client_message_id", msg.ClientMessageID).
+				Str("event_id", maybeMapMXID.String()).
+				Msg("teams message matched existing send intent, skipping matrix send")
 		}
 		if m.MessageMap != nil && msg.MessageID != "" && maybeMapMXID != "" {
 			if err := m.MessageMap.Upsert(&database.TeamsMessageMap{

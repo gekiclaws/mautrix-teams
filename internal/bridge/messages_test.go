@@ -103,11 +103,13 @@ func (f *fakeMessageMapWriter) Upsert(mapping *database.TeamsMessageMap) error {
 }
 
 type fakeReactionIngestor struct {
-	messageIDs []string
+	messageIDs  []string
+	targetMXIDs []id.EventID
 }
 
 func (f *fakeReactionIngestor) IngestMessageReactions(ctx context.Context, threadID string, roomID id.RoomID, msg model.RemoteMessage, targetMXID id.EventID) error {
 	f.messageIDs = append(f.messageIDs, msg.MessageID)
+	f.targetMXIDs = append(f.targetMXIDs, targetMXID)
 	return nil
 }
 
@@ -360,12 +362,59 @@ func TestIngestThreadUsesSendIntentMXIDForMessageMap(t *testing.T) {
 	if len(messageMap.entries) != 1 {
 		t.Fatalf("expected one message map entry, got %d", len(messageMap.entries))
 	}
+	if len(sender.sent) != 0 {
+		t.Fatalf("expected matrix send to be skipped, got %#v", sender.sent)
+	}
 	entry := messageMap.entries[0]
 	if entry.MXID != "$original" {
 		t.Fatalf("expected original mxid mapping, got %s", entry.MXID)
 	}
 	if entry.ThreadID != "thread-1" || entry.TeamsMessageID != "m1" {
 		t.Fatalf("unexpected mapping: %#v", entry)
+	}
+}
+
+func TestIngestThreadSkipsSendButStillIngestsReactionsOnSendIntent(t *testing.T) {
+	lister := &fakeMessageLister{
+		messages: []model.RemoteMessage{
+			{SequenceID: "1", MessageID: "m1", ClientMessageID: "c1", Body: "one"},
+		},
+	}
+	sender := &fakeMatrixSender{}
+	sendIntents := &fakeSendIntentLookup{
+		byClientMessageID: map[string]*database.TeamsSendIntent{
+			"c1": {MXID: id.EventID("$original")},
+		},
+	}
+	messageMap := &fakeMessageMapWriter{}
+	reactions := &fakeReactionIngestor{}
+	ingestor := &MessageIngestor{
+		Lister:           lister,
+		Sender:           sender,
+		SendIntents:      sendIntents,
+		MessageMap:       messageMap,
+		ReactionIngestor: reactions,
+		Log:              zerolog.New(io.Discard),
+	}
+
+	res, err := ingestor.IngestThread(context.Background(), "thread-1", "@oneToOne.skype", "!room:example", nil)
+	if err != nil {
+		t.Fatalf("IngestThread failed: %v", err)
+	}
+	if !res.Advanced || res.LastSequenceID != "1" {
+		t.Fatalf("expected advancement on matched send intent, got %#v", res)
+	}
+	if res.MessagesIngested != 0 {
+		t.Fatalf("expected 0 ingested messages when send is skipped, got %d", res.MessagesIngested)
+	}
+	if len(sender.sent) != 0 {
+		t.Fatalf("expected matrix send to be skipped, got %#v", sender.sent)
+	}
+	if len(messageMap.entries) != 1 || messageMap.entries[0].MXID != "$original" {
+		t.Fatalf("expected message map to use original mxid, got %#v", messageMap.entries)
+	}
+	if len(reactions.targetMXIDs) != 1 || reactions.targetMXIDs[0] != "$original" {
+		t.Fatalf("expected reactions to target original mxid, got %#v", reactions.targetMXIDs)
 	}
 }
 
