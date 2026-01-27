@@ -127,15 +127,18 @@ func TestIngestThreadFiltersBySequence(t *testing.T) {
 	}
 
 	last := "2"
-	seq, advanced, err := ingestor.IngestThread(context.Background(), "thread-1", "@oneToOne.skype", "!room:example", &last)
+	res, err := ingestor.IngestThread(context.Background(), "thread-1", "@oneToOne.skype", "!room:example", &last)
 	if err != nil {
 		t.Fatalf("IngestThread failed: %v", err)
 	}
-	if !advanced {
+	if !res.Advanced {
 		t.Fatalf("expected advancement when newer message is sent")
 	}
-	if seq != "3" {
-		t.Fatalf("unexpected seq: %q", seq)
+	if res.LastSequenceID != "3" {
+		t.Fatalf("unexpected seq: %q", res.LastSequenceID)
+	}
+	if res.MessagesIngested != 1 {
+		t.Fatalf("expected 1 ingested message, got %d", res.MessagesIngested)
 	}
 	if len(sender.sent) != 1 || sender.sent[0] != "three" {
 		t.Fatalf("unexpected sent messages: %#v", sender.sent)
@@ -159,12 +162,15 @@ func TestIngestThreadAlwaysIngestsReactions(t *testing.T) {
 	}
 
 	last := "2"
-	_, advanced, err := ingestor.IngestThread(context.Background(), "thread-1", "@oneToOne.skype", "!room:example", &last)
+	res, err := ingestor.IngestThread(context.Background(), "thread-1", "@oneToOne.skype", "!room:example", &last)
 	if err != nil {
 		t.Fatalf("IngestThread failed: %v", err)
 	}
-	if advanced {
+	if res.Advanced {
 		t.Fatalf("unexpected advance")
+	}
+	if res.MessagesIngested != 0 {
+		t.Fatalf("expected 0 ingested messages, got %d", res.MessagesIngested)
 	}
 	if len(reactions.messageIDs) != 2 {
 		t.Fatalf("expected 2 reaction ingests, got %d", len(reactions.messageIDs))
@@ -189,15 +195,18 @@ func TestIngestThreadStopsOnFailure(t *testing.T) {
 		Log:    zerolog.New(io.Discard),
 	}
 
-	seq, advanced, err := ingestor.IngestThread(context.Background(), "thread-1", "@oneToOne.skype", "!room:example", nil)
+	res, err := ingestor.IngestThread(context.Background(), "thread-1", "@oneToOne.skype", "!room:example", nil)
 	if err != nil {
 		t.Fatalf("IngestThread failed: %v", err)
 	}
-	if advanced {
+	if res.Advanced {
 		t.Fatalf("expected no advancement on failure")
 	}
-	if seq != "" {
-		t.Fatalf("unexpected seq: %q", seq)
+	if res.LastSequenceID != "" {
+		t.Fatalf("unexpected seq: %q", res.LastSequenceID)
+	}
+	if res.MessagesIngested != 0 {
+		t.Fatalf("expected 0 ingested messages on failure, got %d", res.MessagesIngested)
 	}
 	if len(sender.sent) != 1 || sender.sent[0] != "one" {
 		t.Fatalf("expected only first message sent, got: %#v", sender.sent)
@@ -218,15 +227,18 @@ func TestIngestThreadAdvancesOnSuccess(t *testing.T) {
 		Log:    zerolog.New(io.Discard),
 	}
 
-	seq, advanced, err := ingestor.IngestThread(context.Background(), "thread-1", "@oneToOne.skype", "!room:example", nil)
+	res, err := ingestor.IngestThread(context.Background(), "thread-1", "@oneToOne.skype", "!room:example", nil)
 	if err != nil {
 		t.Fatalf("IngestThread failed: %v", err)
 	}
-	if !advanced {
+	if !res.Advanced {
 		t.Fatalf("expected advancement on success")
 	}
-	if seq != "2" {
-		t.Fatalf("unexpected seq: %q", seq)
+	if res.LastSequenceID != "2" {
+		t.Fatalf("unexpected seq: %q", res.LastSequenceID)
+	}
+	if res.MessagesIngested != 2 {
+		t.Fatalf("expected 2 ingested messages, got %d", res.MessagesIngested)
 	}
 	if len(sender.sent) != 2 {
 		t.Fatalf("expected both messages sent, got: %#v", sender.sent)
@@ -249,11 +261,11 @@ func TestIngestThreadInsertsProfileAndUsesDisplayName(t *testing.T) {
 		Log:      zerolog.New(io.Discard),
 	}
 
-	_, advanced, err := ingestor.IngestThread(context.Background(), "thread-1", "@oneToOne.skype", "!room:example", nil)
+	res, err := ingestor.IngestThread(context.Background(), "thread-1", "@oneToOne.skype", "!room:example", nil)
 	if err != nil {
 		t.Fatalf("IngestThread failed: %v", err)
 	}
-	if !advanced {
+	if !res.Advanced {
 		t.Fatalf("expected advancement on success")
 	}
 	if len(store.insertedIDs) != 1 || store.insertedIDs[0] != "8:user-1" {
@@ -298,11 +310,11 @@ func TestIngestThreadUsesCachedDisplayName(t *testing.T) {
 		Log:      zerolog.New(io.Discard),
 	}
 
-	_, advanced, err := ingestor.IngestThread(context.Background(), "thread-1", "@oneToOne.skype", "!room:example", nil)
+	res, err := ingestor.IngestThread(context.Background(), "thread-1", "@oneToOne.skype", "!room:example", nil)
 	if err != nil {
 		t.Fatalf("IngestThread failed: %v", err)
 	}
-	if !advanced {
+	if !res.Advanced {
 		t.Fatalf("expected advancement on success")
 	}
 	if len(store.insertedIDs) != 0 {
@@ -338,11 +350,11 @@ func TestIngestThreadUsesSendIntentMXIDForMessageMap(t *testing.T) {
 		Log:         zerolog.New(io.Discard),
 	}
 
-	_, advanced, err := ingestor.IngestThread(context.Background(), "thread-1", "@oneToOne.skype", "!room:example", nil)
+	res, err := ingestor.IngestThread(context.Background(), "thread-1", "@oneToOne.skype", "!room:example", nil)
 	if err != nil {
 		t.Fatalf("IngestThread failed: %v", err)
 	}
-	if !advanced {
+	if !res.Advanced {
 		t.Fatalf("expected advancement on success")
 	}
 	if len(messageMap.entries) != 1 {
@@ -381,11 +393,11 @@ func TestIngestThreadUpdatesDisplayNameOnChange(t *testing.T) {
 		Log:      zerolog.New(io.Discard),
 	}
 
-	_, advanced, err := ingestor.IngestThread(context.Background(), "thread-1", "@oneToOne.skype", "!room:example", nil)
+	res, err := ingestor.IngestThread(context.Background(), "thread-1", "@oneToOne.skype", "!room:example", nil)
 	if err != nil {
 		t.Fatalf("IngestThread failed: %v", err)
 	}
-	if !advanced {
+	if !res.Advanced {
 		t.Fatalf("expected advancement on success")
 	}
 	if len(store.updatedIDs) != 1 || store.updatedIDs[0] != "8:user-3" {
@@ -429,11 +441,11 @@ func TestIngestThreadDoesNotUpdateWhenIMDisplayNameEmpty(t *testing.T) {
 		Log:      zerolog.New(io.Discard),
 	}
 
-	_, advanced, err := ingestor.IngestThread(context.Background(), "thread-1", "@oneToOne.skype", "!room:example", nil)
+	res, err := ingestor.IngestThread(context.Background(), "thread-1", "@oneToOne.skype", "!room:example", nil)
 	if err != nil {
 		t.Fatalf("IngestThread failed: %v", err)
 	}
-	if !advanced {
+	if !res.Advanced {
 		t.Fatalf("expected advancement on success")
 	}
 	if len(store.updatedIDs) != 0 {
@@ -471,11 +483,11 @@ func TestIngestThreadDoesNotUpdateWhenNameUnchanged(t *testing.T) {
 		Log:      zerolog.New(io.Discard),
 	}
 
-	_, advanced, err := ingestor.IngestThread(context.Background(), "thread-1", "@oneToOne.skype", "!room:example", nil)
+	res, err := ingestor.IngestThread(context.Background(), "thread-1", "@oneToOne.skype", "!room:example", nil)
 	if err != nil {
 		t.Fatalf("IngestThread failed: %v", err)
 	}
-	if !advanced {
+	if !res.Advanced {
 		t.Fatalf("expected advancement on success")
 	}
 	if len(store.updatedIDs) != 0 {
@@ -505,11 +517,11 @@ func TestIngestThreadSkipsProfileForNonUserID(t *testing.T) {
 		Log:      zerolog.New(io.Discard),
 	}
 
-	_, advanced, err := ingestor.IngestThread(context.Background(), "thread-1", "@oneToOne.skype", "!room:example", nil)
+	res, err := ingestor.IngestThread(context.Background(), "thread-1", "@oneToOne.skype", "!room:example", nil)
 	if err != nil {
 		t.Fatalf("IngestThread failed: %v", err)
 	}
-	if !advanced {
+	if !res.Advanced {
 		t.Fatalf("expected advancement on success")
 	}
 	if len(store.insertedIDs) != 0 {

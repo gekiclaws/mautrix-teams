@@ -14,12 +14,12 @@ type TeamsConsumerIngestor struct {
 	Log    zerolog.Logger
 }
 
-func (i *TeamsConsumerIngestor) PollOnce(ctx context.Context, thread *database.TeamsThread) error {
+func (i *TeamsConsumerIngestor) PollOnce(ctx context.Context, thread *database.TeamsThread) (SyncResult, error) {
 	if i == nil || i.Syncer == nil {
-		return errors.New("missing thread syncer")
+		return SyncResult{}, errors.New("missing thread syncer")
 	}
 	if thread == nil {
-		return errors.New("missing thread")
+		return SyncResult{}, errors.New("missing thread")
 	}
 	return i.Syncer.SyncThread(ctx, thread)
 }

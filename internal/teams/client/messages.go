@@ -311,6 +311,15 @@ func (c *Client) fetchJSON(ctx context.Context, endpoint string, out interface{}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		if resp.StatusCode == http.StatusTooManyRequests {
+			return RetryableError{
+				Status:     resp.StatusCode,
+				RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After")),
+			}
+		}
+		if resp.StatusCode >= http.StatusInternalServerError {
+			return RetryableError{Status: resp.StatusCode}
+		}
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
 		return MessagesError{
 			Status:      resp.StatusCode,

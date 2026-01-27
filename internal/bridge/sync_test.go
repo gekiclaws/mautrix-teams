@@ -2,6 +2,7 @@ package teamsbridge
 
 import (
 	"context"
+	"errors"
 	"io"
 	"testing"
 
@@ -52,8 +53,12 @@ func TestSyncThreadNoResendOnSecondRun(t *testing.T) {
 		ConversationID: stringPtr("@thread.v2"),
 	}
 
-	if err := syncer.SyncThread(context.Background(), thread); err != nil {
+	res, err := syncer.SyncThread(context.Background(), thread)
+	if err != nil {
 		t.Fatalf("SyncThread failed: %v", err)
+	}
+	if !res.Advanced || res.MessagesIngested != 2 || res.LastSequenceID != "2" {
+		t.Fatalf("unexpected sync result: %#v", res)
 	}
 	if len(sender.sent) != 2 {
 		t.Fatalf("expected 2 sends, got %d", len(sender.sent))
@@ -64,8 +69,12 @@ func TestSyncThreadNoResendOnSecondRun(t *testing.T) {
 
 	last := store.seqByThread["thread-1"]
 	thread.LastSequenceID = &last
-	if err := syncer.SyncThread(context.Background(), thread); err != nil {
+	res, err = syncer.SyncThread(context.Background(), thread)
+	if err != nil {
 		t.Fatalf("SyncThread second run failed: %v", err)
+	}
+	if res.Advanced || res.MessagesIngested != 0 || res.LastSequenceID != "2" {
+		t.Fatalf("unexpected sync result on second run: %#v", res)
 	}
 	if len(sender.sent) != 2 {
 		t.Fatalf("expected no additional sends, got %d", len(sender.sent))
@@ -100,8 +109,12 @@ func TestSyncThreadStopsOnFailure(t *testing.T) {
 		ConversationID: stringPtr("@thread.v2"),
 	}
 
-	if err := syncer.SyncThread(context.Background(), thread); err != nil {
+	res, err := syncer.SyncThread(context.Background(), thread)
+	if err != nil {
 		t.Fatalf("SyncThread failed: %v", err)
+	}
+	if res.Advanced || res.MessagesIngested != 0 || res.LastSequenceID != "" {
+		t.Fatalf("unexpected sync result: %#v", res)
 	}
 	if len(sender.sent) != 1 || sender.sent[0] != "one" {
 		t.Fatalf("expected only first message sent, got: %#v", sender.sent)
@@ -137,8 +150,12 @@ func TestSyncThreadResumesAfterFailure(t *testing.T) {
 		ConversationID: stringPtr("@thread.v2"),
 	}
 
-	if err := syncer.SyncThread(context.Background(), thread); err != nil {
+	res, err := syncer.SyncThread(context.Background(), thread)
+	if err != nil {
 		t.Fatalf("SyncThread failed: %v", err)
+	}
+	if res.Advanced || res.MessagesIngested != 0 {
+		t.Fatalf("unexpected sync result after failure: %#v", res)
 	}
 	if store.calls != 0 {
 		t.Fatalf("expected no persistence on failure, got %d", store.calls)
@@ -146,8 +163,12 @@ func TestSyncThreadResumesAfterFailure(t *testing.T) {
 
 	retrySender := &fakeMatrixSender{}
 	syncer.Ingestor.Sender = retrySender
-	if err := syncer.SyncThread(context.Background(), thread); err != nil {
+	res, err = syncer.SyncThread(context.Background(), thread)
+	if err != nil {
 		t.Fatalf("SyncThread retry failed: %v", err)
+	}
+	if !res.Advanced || res.MessagesIngested != 3 || res.LastSequenceID != "3" {
+		t.Fatalf("unexpected sync result after retry: %#v", res)
 	}
 	if len(retrySender.sent) != 3 {
 		t.Fatalf("expected retry to send all messages, got %d", len(retrySender.sent))
@@ -183,8 +204,12 @@ func TestSyncThreadSkipsEmptyBody(t *testing.T) {
 		ConversationID: stringPtr("@thread.v2"),
 	}
 
-	if err := syncer.SyncThread(context.Background(), thread); err != nil {
+	res, err := syncer.SyncThread(context.Background(), thread)
+	if err != nil {
 		t.Fatalf("SyncThread failed: %v", err)
+	}
+	if !res.Advanced || res.MessagesIngested != 2 || res.LastSequenceID != "3" {
+		t.Fatalf("unexpected sync result: %#v", res)
 	}
 	if len(sender.sent) != 2 || sender.sent[0] != "one" || sender.sent[1] != "three" {
 		t.Fatalf("unexpected sends: %#v", sender.sent)
@@ -218,11 +243,45 @@ func TestSyncThreadUpdatesThreadState(t *testing.T) {
 		ConversationID: stringPtr("@thread.v2"),
 	}
 
-	if err := syncer.SyncThread(context.Background(), thread); err != nil {
+	res, err := syncer.SyncThread(context.Background(), thread)
+	if err != nil {
 		t.Fatalf("SyncThread failed: %v", err)
+	}
+	if !res.Advanced || res.LastSequenceID != "1" {
+		t.Fatalf("unexpected sync result: %#v", res)
 	}
 	if thread.LastSequenceID == nil || *thread.LastSequenceID != "1" {
 		t.Fatalf("expected thread last sequence to be updated, got %#v", thread.LastSequenceID)
+	}
+}
+
+func TestSyncThreadPropagatesListerError(t *testing.T) {
+	sentinel := errors.New("boom")
+	lister := &fakeMessageLister{err: sentinel}
+	sender := &fakeMatrixSender{}
+	ingestor := &MessageIngestor{
+		Lister: lister,
+		Sender: sender,
+		Log:    zerolog.New(io.Discard),
+	}
+	store := &fakeProgressStore{}
+	syncer := &ThreadSyncer{
+		Ingestor: ingestor,
+		Store:    store,
+		Log:      zerolog.New(io.Discard),
+	}
+	thread := &database.TeamsThread{
+		ThreadID:       "thread-1",
+		RoomID:         id.RoomID("!room:example"),
+		ConversationID: stringPtr("@thread.v2"),
+	}
+
+	_, err := syncer.SyncThread(context.Background(), thread)
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("expected sentinel error, got %v", err)
+	}
+	if store.calls != 0 {
+		t.Fatalf("expected no persistence on lister error, got %d", store.calls)
 	}
 }
 

@@ -112,19 +112,39 @@ func (br *DiscordBridge) runTeamsConsumerMessageSync(ctx context.Context, log ze
 	}
 
 	threads := br.DB.TeamsThread.GetAll()
-	pollInterval := 30 * time.Second
-	log.Info().
-		Int("threads", len(threads)).
-		Dur("interval", pollInterval).
-		Msg("teams polling loop started")
+	log.Info().Int("threads", len(threads)).Msg("teams polling loop started")
+
+	type threadPollState struct {
+		Backoff    teamsbridge.PollBackoff
+		NextPollAt time.Time
+	}
+
+	const baseDelay = 2 * time.Second
+
+	states := make(map[string]*threadPollState, len(threads))
+	now := time.Now().UTC()
+	for _, thread := range threads {
+		if thread == nil || thread.ThreadID == "" {
+			continue
+		}
+		states[thread.ThreadID] = &threadPollState{
+			Backoff: teamsbridge.PollBackoff{
+				Delay: baseDelay,
+			},
+			NextPollAt: now,
+		}
+	}
 
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		log.Info().
-			Int("threads", len(threads)).
-			Msg("teams poll tick")
+
+		now = time.Now().UTC()
+		earliestNext := now.Add(24 * time.Hour)
+		nextThreadID := ""
+		dueCount := 0
+
 		for _, thread := range threads {
 			if thread == nil {
 				continue
@@ -141,18 +161,82 @@ func (br *DiscordBridge) runTeamsConsumerMessageSync(ctx context.Context, log ze
 					Msg("skipping non-v2 thread")
 				continue
 			}
-			if err := consumerIngestor.PollOnce(ctx, thread); err != nil {
-				log.Error().
-					Err(err).
-					Str("thread_id", thread.ThreadID).
-					Msg("teams poll thread failed")
+
+			state := states[thread.ThreadID]
+			if state == nil {
+				state = &threadPollState{
+					Backoff: teamsbridge.PollBackoff{Delay: baseDelay},
+				}
+				states[thread.ThreadID] = state
+			}
+
+			if now.Before(state.NextPollAt) {
+				if state.NextPollAt.Before(earliestNext) {
+					earliestNext = state.NextPollAt
+					nextThreadID = thread.ThreadID
+				}
+				continue
+			}
+
+			dueCount++
+			res, err := consumerIngestor.PollOnce(ctx, thread)
+			delay, reason := teamsbridge.ApplyPollBackoff(&state.Backoff, res, err)
+			state.NextPollAt = now.Add(delay)
+
+			backoffLog := log.Info()
+			if err != nil {
+				backoffLog = log.Warn().Err(err)
+			}
+
+			var retryable consumerclient.RetryableError
+			if err != nil && errors.As(err, &retryable) {
+				backoffLog.
+					Int("status", retryable.Status).
+					Dur("retry_after", retryable.RetryAfter)
+			}
+
+			var msgErr consumerclient.MessagesError
+			if err != nil && errors.As(err, &msgErr) {
+				backoffLog.Int("status", msgErr.Status)
+			}
+
+			backoffLog.
+				Str("thread_id", thread.ThreadID).
+				Str("reason", string(reason)).
+				Dur("delay", delay).
+				Int("messages_ingested", res.MessagesIngested).
+				Bool("advanced", res.Advanced).
+				Msg("teams poll backoff updated")
+
+			if state.NextPollAt.Before(earliestNext) {
+				earliestNext = state.NextPollAt
+				nextThreadID = thread.ThreadID
 			}
 		}
+
+		if earliestNext.Equal(now.Add(24 * time.Hour)) {
+			earliestNext = now.Add(baseDelay)
+		}
+		sleepFor := earliestNext.Sub(now)
+		if sleepFor < 200*time.Millisecond {
+			sleepFor = 200 * time.Millisecond
+		}
+
 		// TODO: periodically re-run thread discovery to pick up new conversations.
 		log.Info().
-			Dur("duration", pollInterval).
-			Msg("teams poll sleep duration")
-		time.Sleep(pollInterval)
+			Int("due_threads", dueCount).
+			Str("next_thread_id", nextThreadID).
+			Time("next_poll_at", earliestNext).
+			Dur("duration", sleepFor).
+			Msg("teams poll sleeping")
+
+		timer := time.NewTimer(sleepFor)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
 	}
 }
 

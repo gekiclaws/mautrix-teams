@@ -470,6 +470,56 @@ func TestListMessagesNon2xx(t *testing.T) {
 	}
 }
 
+func TestListMessages429ReturnsRetryableWithRetryAfter(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "2")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client())
+	client.MessagesURL = server.URL + "/conversations"
+	client.Token = "token123"
+
+	_, err := client.ListMessages(context.Background(), "@oneToOne.skype", "")
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	var retryable RetryableError
+	if !errors.As(err, &retryable) {
+		t.Fatalf("expected RetryableError, got %T", err)
+	}
+	if retryable.Status != http.StatusTooManyRequests {
+		t.Fatalf("unexpected status: %d", retryable.Status)
+	}
+	if retryable.RetryAfter != 2*time.Second {
+		t.Fatalf("unexpected retry-after: %s", retryable.RetryAfter)
+	}
+}
+
+func TestListMessages5xxReturnsRetryable(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client())
+	client.MessagesURL = server.URL + "/conversations"
+	client.Token = "token123"
+
+	_, err := client.ListMessages(context.Background(), "@oneToOne.skype", "")
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	var retryable RetryableError
+	if !errors.As(err, &retryable) {
+		t.Fatalf("expected RetryableError, got %T", err)
+	}
+	if retryable.Status != http.StatusInternalServerError {
+		t.Fatalf("unexpected status: %d", retryable.Status)
+	}
+}
+
 func TestListMessagesMissingConversationID(t *testing.T) {
 	client := NewClient(http.DefaultClient)
 	client.Token = "token123"

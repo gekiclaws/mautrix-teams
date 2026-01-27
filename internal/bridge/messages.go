@@ -67,15 +67,21 @@ type MessageIngestor struct {
 	Log              zerolog.Logger
 }
 
-func (m *MessageIngestor) IngestThread(ctx context.Context, threadID string, conversationID string, roomID id.RoomID, lastSequenceID *string) (string, bool, error) {
+type IngestResult struct {
+	MessagesIngested int
+	LastSequenceID   string
+	Advanced         bool
+}
+
+func (m *MessageIngestor) IngestThread(ctx context.Context, threadID string, conversationID string, roomID id.RoomID, lastSequenceID *string) (IngestResult, error) {
 	if m == nil || m.Lister == nil {
-		return "", false, errors.New("missing message lister")
+		return IngestResult{}, errors.New("missing message lister")
 	}
 	if m.Sender == nil {
-		return "", false, errors.New("missing message sender")
+		return IngestResult{}, errors.New("missing message sender")
 	}
 	if conversationID == "" {
-		return "", false, errors.New("missing conversation id")
+		return IngestResult{}, errors.New("missing conversation id")
 	}
 
 	since := ""
@@ -85,7 +91,7 @@ func (m *MessageIngestor) IngestThread(ctx context.Context, threadID string, con
 
 	messages, err := m.Lister.ListMessages(ctx, conversationID, since)
 	if err != nil {
-		return "", false, err
+		return IngestResult{}, err
 	}
 
 	m.Log.Info().
@@ -94,6 +100,7 @@ func (m *MessageIngestor) IngestThread(ctx context.Context, threadID string, con
 		Msg("teams messages fetched")
 
 	lastSuccess := ""
+	messagesIngested := 0
 	reactionIngested := 0
 	ingestReactions := func(msg model.RemoteMessage, targetMXID id.EventID) {
 		if m.ReactionIngestor != nil {
@@ -198,8 +205,9 @@ func (m *MessageIngestor) IngestThread(ctx context.Context, threadID string, con
 				Str("room_id", roomID.String()).
 				Str("seq", msg.SequenceID).
 				Msg("failed to send matrix message")
-			return "", false, nil
+			return IngestResult{}, nil
 		}
+		messagesIngested++
 
 		maybeMapMXID := eventID
 		if msg.ClientMessageID != "" && m.SendIntents != nil {
@@ -240,10 +248,16 @@ func (m *MessageIngestor) IngestThread(ctx context.Context, threadID string, con
 	}
 
 	if lastSuccess == "" {
-		return "", false, nil
+		return IngestResult{
+			MessagesIngested: messagesIngested,
+		}, nil
 	}
 
-	return lastSuccess, true, nil
+	return IngestResult{
+		MessagesIngested: messagesIngested,
+		LastSequenceID:   lastSuccess,
+		Advanced:         true,
+	}, nil
 }
 
 type MessageReactionIngestor interface {
