@@ -162,6 +162,12 @@ func (br *DiscordBridge) runTeamsConsumerMessageSync(ctx context.Context, log ze
 		}
 	}
 
+	scanDBThreads := func() {
+		for _, thread := range br.DB.TeamsThread.GetAll() {
+			registerThread(thread)
+		}
+	}
+
 	refreshOnce := func(refreshCtx context.Context) {
 		discovered := 0
 		newCount := 0
@@ -221,6 +227,10 @@ func (br *DiscordBridge) runTeamsConsumerMessageSync(ctx context.Context, log ze
 				break forDrain
 			}
 		}
+
+		// Pick up threads inserted via other paths (e.g. initial room sync)
+		// that do not flow through newThreadsCh.
+		scanDBThreads()
 
 		now = time.Now().UTC()
 		earliestNext := now.Add(24 * time.Hour)
