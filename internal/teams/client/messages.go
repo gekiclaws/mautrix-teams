@@ -16,6 +16,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/rs/zerolog"
+
 	"go.mau.fi/mautrix-teams/internal/teams/model"
 )
 
@@ -187,25 +189,48 @@ func (c *Client) SendMessageWithID(ctx context.Context, threadID string, text st
 	if err != nil {
 		return 0, err
 	}
+	req.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(body)), nil
+	}
 	req.Header.Set("authentication", "skypetoken="+c.Token)
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
 	c.debugRequest("teams send message request", messagesURL, req)
 
-	resp, err := c.HTTP.Do(req)
+	executor := c.Executor
+	if executor == nil {
+		executor = &TeamsRequestExecutor{
+			HTTP:        c.HTTP,
+			Log:         zerolog.Nop(),
+			MaxRetries:  4,
+			BaseBackoff: 500 * time.Millisecond,
+			MaxBackoff:  10 * time.Second,
+		}
+		c.Executor = executor
+	}
+	if executor.HTTP == nil {
+		executor.HTTP = c.HTTP
+	}
+	if c.Log != nil {
+		executor.Log = *c.Log
+	}
+
+	ctx = WithRequestMeta(ctx, RequestMeta{
+		ThreadID:        threadID,
+		ClientMessageID: clientMessageID,
+	})
+	resp, err := executor.Do(ctx, req, classifyTeamsSendResponse)
 	if err != nil {
-		return 0, err
+		statusCode := 0
+		if resp != nil {
+			statusCode = resp.StatusCode
+			if resp.Body != nil {
+				_ = resp.Body.Close()
+			}
+		}
+		return statusCode, err
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
-		return resp.StatusCode, SendMessageError{
-			Status:      resp.StatusCode,
-			BodySnippet: string(snippet),
-		}
-	}
-
 	return resp.StatusCode, nil
 }
 
@@ -215,6 +240,44 @@ func formatHTMLContent(text string) string {
 	escaped := html.EscapeString(normalized)
 	escaped = strings.ReplaceAll(escaped, "\n", "<br>")
 	return "<p>" + escaped + "</p>"
+}
+
+func classifyTeamsSendResponse(resp *http.Response) error {
+	if resp == nil {
+		return errors.New("missing response")
+	}
+	if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
+		return nil
+	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return RetryableError{
+			Status:     resp.StatusCode,
+			RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After")),
+		}
+	}
+	if resp.StatusCode >= http.StatusInternalServerError {
+		return RetryableError{Status: resp.StatusCode}
+	}
+	snippet, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
+	return SendMessageError{
+		Status:      resp.StatusCode,
+		BodySnippet: string(snippet),
+	}
+}
+
+func parseRetryAfter(value string) time.Duration {
+	if value == "" {
+		return 0
+	}
+	if seconds, err := strconv.Atoi(value); err == nil && seconds >= 0 {
+		return time.Duration(seconds) * time.Second
+	}
+	if at, err := http.ParseTime(value); err == nil {
+		if duration := time.Until(at); duration > 0 {
+			return duration
+		}
+	}
+	return 0
 }
 
 func normalizeSequenceID(value json.RawMessage) (string, error) {

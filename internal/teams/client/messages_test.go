@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -353,6 +354,86 @@ func TestSendMessageNon2xx(t *testing.T) {
 	}
 	if sendErr.BodySnippet == "" {
 		t.Fatalf("expected body snippet")
+	}
+}
+
+func TestSendMessageRetriesAfter429(t *testing.T) {
+	var calls int32
+	var gotClientMessageIDs []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		var payload map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		gotClientMessageIDs = append(gotClientMessageIDs, payload["clientmessageid"])
+		if len(gotClientMessageIDs) == 1 {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client())
+	client.SendMessagesURL = server.URL + "/conversations"
+	client.Token = "token123"
+	client.Executor = &TeamsRequestExecutor{
+		HTTP:        server.Client(),
+		MaxRetries:  1,
+		BaseBackoff: time.Millisecond,
+		MaxBackoff:  time.Millisecond,
+		sleep:       func(ctx context.Context, d time.Duration) error { return nil },
+		jitter:      func(d time.Duration) time.Duration { return d },
+	}
+
+	threadID := "@19:abc@thread.v2"
+	clientMessageID := "123456"
+	statusCode, err := client.SendMessageWithID(context.Background(), threadID, "hello", "8:live:me", clientMessageID)
+	if err != nil {
+		t.Fatalf("SendMessageWithID failed: %v", err)
+	}
+	if statusCode != http.StatusOK {
+		t.Fatalf("unexpected status: %d", statusCode)
+	}
+	if calls != 2 {
+		t.Fatalf("expected 2 attempts, got %d", calls)
+	}
+	if len(gotClientMessageIDs) != 2 {
+		t.Fatalf("expected 2 payloads, got %d", len(gotClientMessageIDs))
+	}
+	if gotClientMessageIDs[0] != clientMessageID || gotClientMessageIDs[1] != clientMessageID {
+		t.Fatalf("clientmessageid changed across retries: %#v", gotClientMessageIDs)
+	}
+}
+
+func TestSendMessageNoRetryOn400(t *testing.T) {
+	var calls int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte("nope"))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client())
+	client.SendMessagesURL = server.URL + "/conversations"
+	client.Token = "token123"
+	client.Executor = &TeamsRequestExecutor{
+		HTTP:       server.Client(),
+		MaxRetries: 2,
+		sleep:      func(ctx context.Context, d time.Duration) error { return nil },
+		jitter:     func(d time.Duration) time.Duration { return d },
+	}
+
+	_, err := client.SendMessageWithID(context.Background(), "@19:abc@thread.v2", "hello", "8:live:me", "999")
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	if calls != 1 {
+		t.Fatalf("expected 1 attempt, got %d", calls)
 	}
 }
 
