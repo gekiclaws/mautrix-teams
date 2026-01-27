@@ -34,7 +34,7 @@ func (br *DiscordBridge) runTeamsConsumerRoomSync(ctx context.Context, log zerol
 		return errors.New("missing config path")
 	}
 
-	state, cookieStore, err := loadTeamsConsumerAuth(br.ConfigPath)
+	state, err := loadTeamsConsumerAuth(br.ConfigPath)
 	if err != nil {
 		return err
 	}
@@ -42,7 +42,7 @@ func (br *DiscordBridge) runTeamsConsumerRoomSync(ctx context.Context, log zerol
 		return errors.New("missing or expired skypetoken")
 	}
 
-	authClient := auth.NewClient(cookieStore)
+	authClient := auth.NewClient(nil)
 	authClient.Log = &log
 
 	consumer := consumerclient.NewClient(authClient.HTTP)
@@ -69,7 +69,7 @@ func (br *DiscordBridge) runTeamsConsumerMessageSync(ctx context.Context, log ze
 		return errors.New("missing config path")
 	}
 
-	state, cookieStore, err := loadTeamsConsumerAuth(br.ConfigPath)
+	state, err := loadTeamsConsumerAuth(br.ConfigPath)
 	if err != nil {
 		return err
 	}
@@ -77,7 +77,7 @@ func (br *DiscordBridge) runTeamsConsumerMessageSync(ctx context.Context, log ze
 		return errors.New("missing or expired skypetoken")
 	}
 
-	authClient := auth.NewClient(cookieStore)
+	authClient := auth.NewClient(nil)
 	authClient.Log = &log
 
 	consumer := consumerclient.NewClient(authClient.HTTP)
@@ -142,7 +142,7 @@ func (br *DiscordBridge) initTeamsConsumerSender(log zerolog.Logger) error {
 	if br.ConfigPath == "" {
 		return errors.New("missing config path")
 	}
-	state, cookieStore, err := loadTeamsConsumerAuth(br.ConfigPath)
+	state, err := loadTeamsConsumerAuth(br.ConfigPath)
 	if err != nil {
 		return err
 	}
@@ -153,7 +153,7 @@ func (br *DiscordBridge) initTeamsConsumerSender(log zerolog.Logger) error {
 		return errors.New("missing teams user id")
 	}
 
-	authClient := auth.NewClient(cookieStore)
+	authClient := auth.NewClient(nil)
 	authClient.Log = &log
 
 	consumer := consumerclient.NewClient(authClient.HTTP)
@@ -174,21 +174,15 @@ func (br *DiscordBridge) ensureTeamsThreadStore() *teamsbridge.TeamsThreadStore 
 	return br.TeamsThreadStore
 }
 
-func loadTeamsConsumerAuth(configPath string) (*auth.AuthState, *auth.CookieStore, error) {
+func loadTeamsConsumerAuth(configPath string) (*auth.AuthState, error) {
 	stateDir := filepath.Dir(configPath)
 	authPath := filepath.Join(stateDir, "auth.json")
-	cookiesPath := filepath.Join(stateDir, "cookies.json")
 
 	stateStore := auth.NewStateStore(authPath)
 	state, err := stateStore.Load()
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	cookieStore, err := auth.LoadCookieStore(cookiesPath)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	return state, cookieStore, nil
+	return state, nil
 }

@@ -86,7 +86,7 @@ func runDevReact(args []string) error {
 		return err
 	}
 
-	state, cookieStore, err := loadTeamsConsumerAuth(opts.ConfigPath)
+	state, err := loadTeamsConsumerAuth(opts.ConfigPath)
 	if err != nil {
 		return err
 	}
@@ -95,7 +95,7 @@ func runDevReact(args []string) error {
 	}
 
 	reactLog := log.With().Str("component", "teams-consumer-reaction").Logger()
-	authClient := auth.NewClient(cookieStore)
+	authClient := auth.NewClient(nil)
 	authClient.Log = &reactLog
 	consumer := consumerclient.NewClient(authClient.HTTP)
 	consumer.Token = state.SkypeToken

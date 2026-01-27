@@ -53,16 +53,10 @@ func main() {
 
 	stateDir := filepath.Dir(*configPath)
 	authPath := filepath.Join(stateDir, "auth.json")
-	cookiesPath := filepath.Join(stateDir, "cookies.json")
 
 	stateStore := auth.NewStateStore(authPath)
-	cookieStore, err := auth.LoadCookieStore(cookiesPath)
-	if err != nil {
-		log.Error().Err(err).Msg("Failed to load cookie jar")
-		os.Exit(1)
-	}
 
-	client := auth.NewClient(cookieStore)
+	client := auth.NewClient(nil)
 	client.Log = log
 	ctx := context.Background()
 
@@ -134,11 +128,6 @@ func main() {
 	}
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to capture auth state")
-		os.Exit(1)
-	}
-
-	if err := cookieStore.Save(cookiesPath); err != nil {
-		log.Error().Err(err).Msg("Failed to save cookies")
 		os.Exit(1)
 	}
 

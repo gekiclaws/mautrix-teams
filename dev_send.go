@@ -84,7 +84,7 @@ func runDevSend(args []string) error {
 		return err
 	}
 
-	state, cookieStore, err := loadTeamsConsumerAuth(opts.ConfigPath)
+	state, err := loadTeamsConsumerAuth(opts.ConfigPath)
 	if err != nil {
 		return err
 	}
@@ -96,7 +96,7 @@ func runDevSend(args []string) error {
 	}
 
 	sendLog := log.With().Str("component", "teams-consumer-send").Logger()
-	authClient := auth.NewClient(cookieStore)
+	authClient := auth.NewClient(nil)
 	authClient.Log = &sendLog
 	consumer := consumerclient.NewClient(authClient.HTTP)
 	consumer.Token = state.SkypeToken
