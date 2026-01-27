@@ -88,10 +88,22 @@ func (m *MessageIngestor) IngestThread(ctx context.Context, threadID string, con
 		return "", false, err
 	}
 
+	m.Log.Info().
+		Str("thread_id", threadID).
+		Int("count", len(messages)).
+		Msg("teams messages fetched")
+
 	lastSuccess := ""
+	reactionIngested := 0
+	ingestReactions := func(msg model.RemoteMessage, targetMXID id.EventID) {
+		if m.ReactionIngestor != nil {
+			reactionIngested++
+		}
+		m.ingestReactions(ctx, threadID, roomID, msg, targetMXID)
+	}
 	for _, msg := range messages {
 		if lastSequenceID != nil && model.CompareSequenceID(msg.SequenceID, *lastSequenceID) <= 0 {
-			m.ingestReactions(ctx, threadID, roomID, msg, "")
+			ingestReactions(msg, "")
 			continue
 		}
 		if msg.Body == "" {
@@ -99,11 +111,11 @@ func (m *MessageIngestor) IngestThread(ctx context.Context, threadID string, con
 				Str("thread_id", threadID).
 				Str("seq", msg.SequenceID).
 				Msg("teams message skipped empty body")
-			m.ingestReactions(ctx, threadID, roomID, msg, "")
+			ingestReactions(msg, "")
 			continue
 		}
 
-		m.Log.Info().
+		m.Log.Debug().
 			Str("thread_id", threadID).
 			Str("seq", msg.SequenceID).
 			Msg("teams message discovered")
@@ -210,14 +222,21 @@ func (m *MessageIngestor) IngestThread(ctx context.Context, threadID string, con
 			}
 		}
 
-		m.ingestReactions(ctx, threadID, roomID, msg, maybeMapMXID)
+		ingestReactions(msg, maybeMapMXID)
 
-		m.Log.Info().
+		m.Log.Debug().
 			Str("room_id", roomID.String()).
 			Str("seq", msg.SequenceID).
 			Msg("matrix message sent")
 
 		lastSuccess = msg.SequenceID
+	}
+
+	if m.ReactionIngestor != nil {
+		m.Log.Info().
+			Str("thread_id", threadID).
+			Int("count", reactionIngested).
+			Msg("teams reactions ingested")
 	}
 
 	if lastSuccess == "" {

@@ -64,6 +64,8 @@ func (s *ThreadSyncer) SyncThread(ctx context.Context, thread *database.TeamsThr
 				Msg("failed to persist last_sequence_id")
 			return err
 		}
+		persisted := newSeq
+		thread.LastSequenceID = &persisted
 		lastSeq = newSeq
 	}
 

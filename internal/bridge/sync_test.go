@@ -194,6 +194,38 @@ func TestSyncThreadSkipsEmptyBody(t *testing.T) {
 	}
 }
 
+func TestSyncThreadUpdatesThreadState(t *testing.T) {
+	lister := &fakeMessageLister{
+		messages: []model.RemoteMessage{
+			{SequenceID: "1", Body: "one"},
+		},
+	}
+	sender := &fakeMatrixSender{}
+	ingestor := &MessageIngestor{
+		Lister: lister,
+		Sender: sender,
+		Log:    zerolog.New(io.Discard),
+	}
+	store := &fakeProgressStore{}
+	syncer := &ThreadSyncer{
+		Ingestor: ingestor,
+		Store:    store,
+		Log:      zerolog.New(io.Discard),
+	}
+	thread := &database.TeamsThread{
+		ThreadID:       "thread-1",
+		RoomID:         id.RoomID("!room:example"),
+		ConversationID: stringPtr("@thread.v2"),
+	}
+
+	if err := syncer.SyncThread(context.Background(), thread); err != nil {
+		t.Fatalf("SyncThread failed: %v", err)
+	}
+	if thread.LastSequenceID == nil || *thread.LastSequenceID != "1" {
+		t.Fatalf("expected thread last sequence to be updated, got %#v", thread.LastSequenceID)
+	}
+}
+
 func stringPtr(value string) *string {
 	return &value
 }

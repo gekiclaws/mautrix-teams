@@ -106,29 +106,54 @@ func (br *DiscordBridge) runTeamsConsumerMessageSync(ctx context.Context, log ze
 		Store:    br.DB.TeamsThread,
 		Log:      log,
 	}
-
-	for _, thread := range br.DB.TeamsThread.GetAll() {
-		if thread == nil {
-			continue
-		}
-		if thread.RoomID == "" {
-			log.Debug().
-				Str("thread_id", thread.ThreadID).
-				Msg("skipping message ingestion without room")
-			continue
-		}
-		if !strings.HasSuffix(thread.ThreadID, "@thread.v2") {
-			log.Debug().
-				Str("thread_id", thread.ThreadID).
-				Msg("skipping non-v2 thread")
-			continue
-		}
-		if err := syncer.SyncThread(ctx, thread); err != nil {
-			return err
-		}
+	consumerIngestor := teamsbridge.TeamsConsumerIngestor{
+		Syncer: &syncer,
+		Log:    log,
 	}
 
-	return nil
+	threads := br.DB.TeamsThread.GetAll()
+	pollInterval := 30 * time.Second
+	log.Info().
+		Int("threads", len(threads)).
+		Dur("interval", pollInterval).
+		Msg("teams polling loop started")
+
+	for {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		log.Info().
+			Int("threads", len(threads)).
+			Msg("teams poll tick")
+		for _, thread := range threads {
+			if thread == nil {
+				continue
+			}
+			if thread.RoomID == "" {
+				log.Debug().
+					Str("thread_id", thread.ThreadID).
+					Msg("skipping message ingestion without room")
+				continue
+			}
+			if !strings.HasSuffix(thread.ThreadID, "@thread.v2") {
+				log.Debug().
+					Str("thread_id", thread.ThreadID).
+					Msg("skipping non-v2 thread")
+				continue
+			}
+			if err := consumerIngestor.PollOnce(ctx, thread); err != nil {
+				log.Error().
+					Err(err).
+					Str("thread_id", thread.ThreadID).
+					Msg("teams poll thread failed")
+			}
+		}
+		// TODO: periodically re-run thread discovery to pick up new conversations.
+		log.Info().
+			Dur("duration", pollInterval).
+			Msg("teams poll sleep duration")
+		time.Sleep(pollInterval)
+	}
 }
 
 func (br *DiscordBridge) startTeamsConsumerSender() {
