@@ -36,6 +36,9 @@ func (e RetryableError) Error() string {
 type RequestMeta struct {
 	ThreadID        string
 	ClientMessageID string
+	TeamsMessageID  string
+	EmotionKey      string
+	Operation       string
 }
 
 type requestMetaKey struct{}
@@ -84,6 +87,9 @@ func (e *TeamsRequestExecutor) Do(ctx context.Context, req *http.Request, classi
 		maxBackoff = 10 * time.Second
 	}
 
+	logger := e.logWithMeta(ctx)
+	prefix := e.logPrefix(ctx)
+
 	var retries int
 	for {
 		if ctx.Err() != nil {
@@ -99,21 +105,21 @@ func (e *TeamsRequestExecutor) Do(ctx context.Context, req *http.Request, classi
 			if isRetryableNetworkError(ctx, err) && retries < maxRetries {
 				retries++
 				backoff := e.computeBackoff(baseBackoff, maxBackoff, retries)
-				logRetry(e.logWithMeta(ctx), attempt+1, 0, 0)
-				logBackoff(e.logWithMeta(ctx), attempt+1, backoff)
+				logRetry(logger, prefix, attempt+1, 0, 0)
+				logBackoff(logger, prefix, attempt+1, backoff)
 				if err := e.sleepWithContext(ctx, backoff); err != nil {
 					return nil, err
 				}
 				continue
 			}
-			logFailure(e.logWithMeta(ctx), attempt, err)
+			logFailure(logger, prefix, attempt, err)
 			return nil, err
 		}
 
 		classifyErr := classify(resp)
 		if classifyErr == nil {
 			if retries > 0 {
-				logSuccess(e.logWithMeta(ctx), retries+1)
+				logSuccess(logger, prefix, retries+1)
 			}
 			return resp, nil
 		}
@@ -125,8 +131,8 @@ func (e *TeamsRequestExecutor) Do(ctx context.Context, req *http.Request, classi
 			if backoff <= 0 {
 				backoff = e.computeBackoff(baseBackoff, maxBackoff, retries)
 			}
-			logRetry(e.logWithMeta(ctx), attempt+1, retryable.Status, backoff)
-			logBackoff(e.logWithMeta(ctx), attempt+1, backoff)
+			logRetry(logger, prefix, attempt+1, retryable.Status, backoff)
+			logBackoff(logger, prefix, attempt+1, backoff)
 			drainAndClose(resp)
 			if err := e.sleepWithContext(ctx, backoff); err != nil {
 				return nil, err
@@ -134,7 +140,7 @@ func (e *TeamsRequestExecutor) Do(ctx context.Context, req *http.Request, classi
 			continue
 		}
 
-		logFailure(e.logWithMeta(ctx), retries+1, classifyErr)
+		logFailure(logger, prefix, retries+1, classifyErr)
 		return resp, classifyErr
 	}
 }
@@ -266,11 +272,24 @@ func (e *TeamsRequestExecutor) logWithMeta(ctx context.Context) zerolog.Logger {
 		if meta.ClientMessageID != "" {
 			logger = logger.With().Str("client_message_id", meta.ClientMessageID).Logger()
 		}
+		if meta.TeamsMessageID != "" {
+			logger = logger.With().Str("teams_message_id", meta.TeamsMessageID).Logger()
+		}
+		if meta.EmotionKey != "" {
+			logger = logger.With().Str("emotion_key", meta.EmotionKey).Logger()
+		}
 	}
 	return logger
 }
 
-func logRetry(logger zerolog.Logger, attempt int, status int, retryAfter time.Duration) {
+func (e *TeamsRequestExecutor) logPrefix(ctx context.Context) string {
+	if meta, ok := requestMetaFromContext(ctx); ok && meta.Operation != "" {
+		return meta.Operation
+	}
+	return "teams send"
+}
+
+func logRetry(logger zerolog.Logger, prefix string, attempt int, status int, retryAfter time.Duration) {
 	event := logger.Warn().Int("attempt", attempt)
 	if status != 0 {
 		event = event.Int("status", status)
@@ -278,17 +297,17 @@ func logRetry(logger zerolog.Logger, attempt int, status int, retryAfter time.Du
 	if retryAfter > 0 {
 		event = event.Dur("retry_after", retryAfter)
 	}
-	event.Msg("teams send retry")
+	event.Msg(prefix + " retry")
 }
 
-func logBackoff(logger zerolog.Logger, attempt int, backoff time.Duration) {
-	logger.Info().Int("attempt", attempt).Dur("duration", backoff).Msg("teams send backoff")
+func logBackoff(logger zerolog.Logger, prefix string, attempt int, backoff time.Duration) {
+	logger.Info().Int("attempt", attempt).Dur("duration", backoff).Msg(prefix + " backoff")
 }
 
-func logSuccess(logger zerolog.Logger, attempts int) {
-	logger.Info().Int("attempts", attempts).Msg("teams send succeeded")
+func logSuccess(logger zerolog.Logger, prefix string, attempts int) {
+	logger.Info().Int("attempts", attempts).Msg(prefix + " succeeded")
 }
 
-func logFailure(logger zerolog.Logger, attempts int, err error) {
-	logger.Warn().Int("attempts", attempts).Err(err).Msg("teams send failed")
+func logFailure(logger zerolog.Logger, prefix string, attempts int, err error) {
+	logger.Warn().Int("attempts", attempts).Err(err).Msg(prefix + " failed")
 }

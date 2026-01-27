@@ -10,6 +10,9 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
+
+	"github.com/rs/zerolog"
 )
 
 type ReactionError struct {
@@ -19,6 +22,17 @@ type ReactionError struct {
 
 func (e ReactionError) Error() string {
 	return "reaction request failed"
+}
+
+func NewReactionError(resp *http.Response) ReactionError {
+	if resp == nil {
+		return ReactionError{}
+	}
+	snippet, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
+	return ReactionError{
+		Status:      resp.StatusCode,
+		BodySnippet: string(snippet),
+	}
 }
 
 func (c *Client) AddReaction(ctx context.Context, threadID string, teamsMessageID string, emotionKey string, appliedAtMS int64) (int, error) {
@@ -49,7 +63,7 @@ func (c *Client) AddReaction(ctx context.Context, threadID string, teamsMessageI
 			"value": appliedAtMS,
 		},
 	}
-	return c.sendReaction(ctx, http.MethodPut, threadID, teamsMessageID, payload)
+	return c.sendReaction(ctx, http.MethodPut, threadID, teamsMessageID, emotionKey, payload)
 }
 
 func (c *Client) RemoveReaction(ctx context.Context, threadID string, teamsMessageID string, emotionKey string) (int, error) {
@@ -76,10 +90,10 @@ func (c *Client) RemoveReaction(ctx context.Context, threadID string, teamsMessa
 			"key": emotionKey,
 		},
 	}
-	return c.sendReaction(ctx, http.MethodDelete, threadID, teamsMessageID, payload)
+	return c.sendReaction(ctx, http.MethodDelete, threadID, teamsMessageID, emotionKey, payload)
 }
 
-func (c *Client) sendReaction(ctx context.Context, method string, threadID string, teamsMessageID string, payload interface{}) (int, error) {
+func (c *Client) sendReaction(ctx context.Context, method string, threadID string, teamsMessageID string, emotionKey string, payload interface{}) (int, error) {
 	baseURL := c.SendMessagesURL
 	if baseURL == "" {
 		baseURL = defaultSendMessagesURL
@@ -96,24 +110,69 @@ func (c *Client) sendReaction(ctx context.Context, method string, threadID strin
 	if err != nil {
 		return 0, err
 	}
+	req.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(body)), nil
+	}
 	req.Header.Set("authentication", "skypetoken="+c.Token)
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
 	c.debugRequest("teams reaction request", endpoint, req)
 
-	resp, err := c.HTTP.Do(req)
+	executor := c.Executor
+	if executor == nil {
+		executor = &TeamsRequestExecutor{
+			HTTP:        c.HTTP,
+			Log:         zerolog.Nop(),
+			MaxRetries:  4,
+			BaseBackoff: 500 * time.Millisecond,
+			MaxBackoff:  10 * time.Second,
+		}
+		c.Executor = executor
+	}
+	if executor.HTTP == nil {
+		executor.HTTP = c.HTTP
+	}
+	if c.Log != nil {
+		executor.Log = *c.Log
+	}
+
+	ctx = WithRequestMeta(ctx, RequestMeta{
+		ThreadID:       threadID,
+		TeamsMessageID: teamsMessageID,
+		EmotionKey:     emotionKey,
+		Operation:      "teams reaction",
+	})
+
+	resp, err := executor.Do(ctx, req, classifyTeamsReactionResponse)
 	if err != nil {
-		return 0, err
+		statusCode := 0
+		if resp != nil {
+			statusCode = resp.StatusCode
+			if resp.Body != nil {
+				_ = resp.Body.Close()
+			}
+		}
+		return statusCode, err
 	}
 	defer resp.Body.Close()
+	return resp.StatusCode, nil
+}
 
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
-		return resp.StatusCode, ReactionError{
-			Status:      resp.StatusCode,
-			BodySnippet: string(snippet),
+func classifyTeamsReactionResponse(resp *http.Response) error {
+	if resp == nil {
+		return errors.New("missing response")
+	}
+	if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
+		return nil
+	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return RetryableError{
+			Status:     resp.StatusCode,
+			RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After")),
 		}
 	}
-
-	return resp.StatusCode, nil
+	if resp.StatusCode >= http.StatusInternalServerError {
+		return RetryableError{Status: resp.StatusCode}
+	}
+	return NewReactionError(resp)
 }
