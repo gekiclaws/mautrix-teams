@@ -2,10 +2,13 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -19,7 +22,7 @@ func TestListMessagesSuccess(t *testing.T) {
 		gotAuth = append(gotAuth, r.Header.Get("authentication"))
 		gotPath = r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"messages":[{"id":"m1","sequenceId":2,"from":{"id":"u1"},"imdisplayname":"User One","fromDisplayNameInToken":"Token User","createdTime":"2024-01-01T00:00:00Z","content":{"text":"hello"}},{"id":"m2","sequenceId":"1","content":{"text":""}}]}`))
+		_, _ = w.Write([]byte(`{"messages":[{"id":"m1","clientmessageid":"c1","sequenceId":2,"from":{"id":"u1"},"imdisplayname":"User One","fromDisplayNameInToken":"Token User","createdTime":"2024-01-01T00:00:00Z","content":{"text":"hello"}},{"id":"m2","sequenceId":"1","content":{"text":""}}]}`))
 	}))
 	defer server.Close()
 
@@ -50,6 +53,9 @@ func TestListMessagesSuccess(t *testing.T) {
 	}
 	if msgs[0].MessageID != "m2" || msgs[1].MessageID != "m1" {
 		t.Fatalf("unexpected ordering: %#v", msgs)
+	}
+	if msgs[1].ClientMessageID != "c1" {
+		t.Fatalf("unexpected clientmessageid: %q", msgs[1].ClientMessageID)
 	}
 	if msgs[1].SenderID != "u1" {
 		t.Fatalf("unexpected sender id: %q", msgs[1].SenderID)
@@ -158,7 +164,7 @@ func TestListMessagesContentVariants(t *testing.T) {
 
 func TestListMessagesFromVariants(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/conversations/%40oneToOne.skype/messages" {
+		if r.URL.Path != "/conversations/%40oneToOne.skype/messages" && r.URL.Path != "/conversations/@oneToOne.skype/messages" {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
@@ -209,6 +215,228 @@ func TestListMessagesFromVariants(t *testing.T) {
 	}
 }
 
+func TestListMessagesEmotionsParsing(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"messages":[` +
+			`{"id":"m1","sequenceId":"1","content":{"text":"hello"},"properties":{"emotions":[` +
+			`{"key":"like","users":[{"mri":"8:one","time":1700000000000},{"mri":"8:two","time":"1700000000123"},{"mri":"8:three","time":"bad"}]},` +
+			`{"key":"heart","users":[]},` +
+			`{"key":" ","users":[{"mri":"8:skip"}]}` +
+			`],"annotationsSummary":[{"key":"like","count":2}]}}` +
+			`]}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client())
+	client.MessagesURL = server.URL + "/conversations"
+	client.Token = "token123"
+
+	msgs, err := client.ListMessages(context.Background(), "@oneToOne.skype", "")
+	if err != nil {
+		t.Fatalf("ListMessages failed: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("unexpected messages length: %d", len(msgs))
+	}
+	if len(msgs[0].Reactions) != 1 {
+		t.Fatalf("unexpected reactions length: %d", len(msgs[0].Reactions))
+	}
+	reaction := msgs[0].Reactions[0]
+	if reaction.EmotionKey != "like" {
+		t.Fatalf("unexpected emotion key: %q", reaction.EmotionKey)
+	}
+	if len(reaction.Users) != 3 {
+		t.Fatalf("unexpected reaction users length: %d", len(reaction.Users))
+	}
+	if reaction.Users[0].MRI != "8:one" || reaction.Users[0].TimeMS != 1700000000000 {
+		t.Fatalf("unexpected first user: %#v", reaction.Users[0])
+	}
+	if reaction.Users[1].MRI != "8:two" || reaction.Users[1].TimeMS != 1700000000123 {
+		t.Fatalf("unexpected second user: %#v", reaction.Users[1])
+	}
+	if reaction.Users[2].MRI != "8:three" || reaction.Users[2].TimeMS != 0 {
+		t.Fatalf("unexpected third user: %#v", reaction.Users[2])
+	}
+}
+
+func TestSendMessageSuccess(t *testing.T) {
+	var gotPath string
+	var gotAuth string
+	var gotContentType string
+	var gotAccept string
+	var payload map[string]string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAuth = r.Header.Get("authentication")
+		gotContentType = r.Header.Get("Content-Type")
+		gotAccept = r.Header.Get("Accept")
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client())
+	client.SendMessagesURL = server.URL + "/conversations"
+	client.Token = "token123"
+
+	threadID := "@19:abc@thread.v2"
+	clientMessageID, err := client.SendMessage(context.Background(), threadID, "Hello <world>\nLine", "8:live:me")
+	if err != nil {
+		t.Fatalf("SendMessage failed: %v", err)
+	}
+	if gotPath != "/conversations/%4019%3Aabc%40thread.v2/messages" && gotPath != "/conversations/@19:abc@thread.v2/messages" {
+		t.Fatalf("unexpected path: %q", gotPath)
+	}
+	if gotAuth != "skypetoken=token123" {
+		t.Fatalf("unexpected authentication header: %q", gotAuth)
+	}
+	if gotContentType != "application/json" {
+		t.Fatalf("unexpected content type: %q", gotContentType)
+	}
+	if gotAccept != "application/json" {
+		t.Fatalf("unexpected accept header: %q", gotAccept)
+	}
+	if payload["type"] != "Message" {
+		t.Fatalf("unexpected type: %q", payload["type"])
+	}
+	if payload["conversationid"] != threadID {
+		t.Fatalf("unexpected conversationid: %q", payload["conversationid"])
+	}
+	if payload["content"] != "<p>Hello &lt;world&gt;<br>Line</p>" {
+		t.Fatalf("unexpected content: %q", payload["content"])
+	}
+	if payload["messagetype"] != "RichText/Html" {
+		t.Fatalf("unexpected messagetype: %q", payload["messagetype"])
+	}
+	if payload["contenttype"] != "Text" {
+		t.Fatalf("unexpected contenttype: %q", payload["contenttype"])
+	}
+	if payload["from"] != "8:live:me" || payload["fromUserId"] != "8:live:me" {
+		t.Fatalf("unexpected from fields: %q %q", payload["from"], payload["fromUserId"])
+	}
+	if payload["composetime"] == "" || payload["composetime"] != payload["originalarrivaltime"] {
+		t.Fatalf("unexpected compose/original arrival time: %q %q", payload["composetime"], payload["originalarrivaltime"])
+	}
+	if payload["clientmessageid"] != clientMessageID {
+		t.Fatalf("clientmessageid mismatch: %q vs %q", payload["clientmessageid"], clientMessageID)
+	}
+	if !regexp.MustCompile(`^[0-9]+$`).MatchString(clientMessageID) {
+		t.Fatalf("clientmessageid is not numeric: %q", clientMessageID)
+	}
+}
+
+func TestSendMessageNon2xx(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte("nope"))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client())
+	client.SendMessagesURL = server.URL + "/conversations"
+	client.Token = "token123"
+
+	_, err := client.SendMessage(context.Background(), "@19:abc@thread.v2", "hello", "8:live:me")
+	if err == nil {
+		t.Fatalf("expected error for non-2xx")
+	}
+	var sendErr SendMessageError
+	if !errors.As(err, &sendErr) {
+		t.Fatalf("expected SendMessageError, got %T", err)
+	}
+	if sendErr.Status != http.StatusBadRequest {
+		t.Fatalf("unexpected status: %d", sendErr.Status)
+	}
+	if sendErr.BodySnippet == "" {
+		t.Fatalf("expected body snippet")
+	}
+}
+
+func TestSendMessageRetriesAfter429(t *testing.T) {
+	var calls int32
+	var gotClientMessageIDs []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		var payload map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		gotClientMessageIDs = append(gotClientMessageIDs, payload["clientmessageid"])
+		if len(gotClientMessageIDs) == 1 {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client())
+	client.SendMessagesURL = server.URL + "/conversations"
+	client.Token = "token123"
+	client.Executor = &TeamsRequestExecutor{
+		HTTP:        server.Client(),
+		MaxRetries:  1,
+		BaseBackoff: time.Millisecond,
+		MaxBackoff:  time.Millisecond,
+		sleep:       func(ctx context.Context, d time.Duration) error { return nil },
+		jitter:      func(d time.Duration) time.Duration { return d },
+	}
+
+	threadID := "@19:abc@thread.v2"
+	clientMessageID := "123456"
+	statusCode, err := client.SendMessageWithID(context.Background(), threadID, "hello", "8:live:me", clientMessageID)
+	if err != nil {
+		t.Fatalf("SendMessageWithID failed: %v", err)
+	}
+	if statusCode != http.StatusOK {
+		t.Fatalf("unexpected status: %d", statusCode)
+	}
+	if calls != 2 {
+		t.Fatalf("expected 2 attempts, got %d", calls)
+	}
+	if len(gotClientMessageIDs) != 2 {
+		t.Fatalf("expected 2 payloads, got %d", len(gotClientMessageIDs))
+	}
+	if gotClientMessageIDs[0] != clientMessageID || gotClientMessageIDs[1] != clientMessageID {
+		t.Fatalf("clientmessageid changed across retries: %#v", gotClientMessageIDs)
+	}
+}
+
+func TestSendMessageNoRetryOn400(t *testing.T) {
+	var calls int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte("nope"))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client())
+	client.SendMessagesURL = server.URL + "/conversations"
+	client.Token = "token123"
+	client.Executor = &TeamsRequestExecutor{
+		HTTP:       server.Client(),
+		MaxRetries: 2,
+		sleep:      func(ctx context.Context, d time.Duration) error { return nil },
+		jitter:     func(d time.Duration) time.Duration { return d },
+	}
+
+	_, err := client.SendMessageWithID(context.Background(), "@19:abc@thread.v2", "hello", "8:live:me", "999")
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	if calls != 1 {
+		t.Fatalf("expected 1 attempt, got %d", calls)
+	}
+}
+
 func TestListMessagesNon2xx(t *testing.T) {
 	body := strings.Repeat("a", maxErrorBodyBytes+10)
 	var gotPath string
@@ -239,6 +467,56 @@ func TestListMessagesNon2xx(t *testing.T) {
 	}
 	if len(msgErr.BodySnippet) != maxErrorBodyBytes {
 		t.Fatalf("unexpected body snippet length: %d", len(msgErr.BodySnippet))
+	}
+}
+
+func TestListMessages429ReturnsRetryableWithRetryAfter(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "2")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client())
+	client.MessagesURL = server.URL + "/conversations"
+	client.Token = "token123"
+
+	_, err := client.ListMessages(context.Background(), "@oneToOne.skype", "")
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	var retryable RetryableError
+	if !errors.As(err, &retryable) {
+		t.Fatalf("expected RetryableError, got %T", err)
+	}
+	if retryable.Status != http.StatusTooManyRequests {
+		t.Fatalf("unexpected status: %d", retryable.Status)
+	}
+	if retryable.RetryAfter != 2*time.Second {
+		t.Fatalf("unexpected retry-after: %s", retryable.RetryAfter)
+	}
+}
+
+func TestListMessages5xxReturnsRetryable(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client())
+	client.MessagesURL = server.URL + "/conversations"
+	client.Token = "token123"
+
+	_, err := client.ListMessages(context.Background(), "@oneToOne.skype", "")
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	var retryable RetryableError
+	if !errors.As(err, &retryable) {
+		t.Fatalf("expected RetryableError, got %T", err)
+	}
+	if retryable.Status != http.StatusInternalServerError {
+		t.Fatalf("unexpected status: %d", retryable.Status)
 	}
 }
 

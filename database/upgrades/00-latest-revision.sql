@@ -1,4 +1,4 @@
--- v0 -> v25 (compatible with v19+): Latest revision
+-- v0 -> v32 (compatible with v19+): Latest revision
 
 CREATE TABLE guild (
     dcid       TEXT PRIMARY KEY,
@@ -73,6 +73,35 @@ CREATE TABLE teams_profile (
     teams_user_id TEXT PRIMARY KEY,
     display_name TEXT NOT NULL,
     last_seen_ts BIGINT NOT NULL
+);
+
+CREATE TABLE teams_send_intent (
+    thread_id TEXT NOT NULL,
+    client_message_id TEXT PRIMARY KEY,
+    timestamp BIGINT NOT NULL,
+    status TEXT NOT NULL,
+    mxid TEXT NOT NULL
+);
+
+CREATE TABLE teams_message_map (
+    mxid TEXT PRIMARY KEY,
+    thread_id TEXT NOT NULL,
+    teams_message_id TEXT NOT NULL
+);
+
+CREATE TABLE teams_reaction_map (
+    reaction_mxid TEXT PRIMARY KEY,
+    target_mxid TEXT NOT NULL,
+    emotion_key TEXT NOT NULL
+);
+
+CREATE TABLE teams_reaction (
+    thread_id TEXT NOT NULL,
+    teams_message_id TEXT NOT NULL,
+    emotion_key TEXT NOT NULL,
+    user_mri TEXT NOT NULL,
+    matrix_event_id TEXT NOT NULL,
+    PRIMARY KEY (thread_id, teams_message_id, emotion_key, user_mri)
 );
 
 CREATE TABLE puppet (

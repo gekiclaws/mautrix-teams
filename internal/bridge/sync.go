@@ -19,18 +19,24 @@ type ThreadSyncer struct {
 	Log      zerolog.Logger
 }
 
-func (s *ThreadSyncer) SyncThread(ctx context.Context, thread *database.TeamsThread) error {
+type SyncResult struct {
+	MessagesIngested int
+	LastSequenceID   string
+	Advanced         bool
+}
+
+func (s *ThreadSyncer) SyncThread(ctx context.Context, thread *database.TeamsThread) (SyncResult, error) {
 	if s == nil || s.Ingestor == nil {
-		return errors.New("missing message ingestor")
+		return SyncResult{}, errors.New("missing message ingestor")
 	}
 	if s.Store == nil {
-		return errors.New("missing thread progress store")
+		return SyncResult{}, errors.New("missing thread progress store")
 	}
 	if thread == nil {
-		return errors.New("missing thread")
+		return SyncResult{}, errors.New("missing thread")
 	}
 	if thread.RoomID == "" {
-		return errors.New("missing room id")
+		return SyncResult{}, errors.New("missing room id")
 	}
 
 	lastSeq := ""
@@ -47,24 +53,22 @@ func (s *ThreadSyncer) SyncThread(ctx context.Context, thread *database.TeamsThr
 		Str("last_seq", lastSeq).
 		Msg("teams sync start")
 
-	newSeq, advanced, err := s.Ingestor.IngestThread(ctx, thread.ThreadID, conversationID, thread.RoomID, thread.LastSequenceID)
+	ingestResult, err := s.Ingestor.IngestThread(ctx, thread.ThreadID, conversationID, thread.RoomID, thread.LastSequenceID)
 	if err != nil {
-		s.Log.Error().
-			Err(err).
-			Str("thread_id", thread.ThreadID).
-			Msg("teams sync failed")
-		return nil
+		return SyncResult{}, err
 	}
 
-	if advanced {
-		if err := s.Store.UpdateLastSequenceID(thread.ThreadID, newSeq); err != nil {
+	if ingestResult.Advanced {
+		if err := s.Store.UpdateLastSequenceID(thread.ThreadID, ingestResult.LastSequenceID); err != nil {
 			s.Log.Error().
 				Err(err).
 				Str("thread_id", thread.ThreadID).
 				Msg("failed to persist last_sequence_id")
-			return err
+			return SyncResult{}, err
 		}
-		lastSeq = newSeq
+		persisted := ingestResult.LastSequenceID
+		thread.LastSequenceID = &persisted
+		lastSeq = ingestResult.LastSequenceID
 	}
 
 	s.Log.Info().
@@ -72,5 +76,9 @@ func (s *ThreadSyncer) SyncThread(ctx context.Context, thread *database.TeamsThr
 		Str("new_last_seq", lastSeq).
 		Msg("teams sync complete")
 
-	return nil
+	return SyncResult{
+		MessagesIngested: ingestResult.MessagesIngested,
+		LastSequenceID:   lastSeq,
+		Advanced:         ingestResult.Advanced,
+	}, nil
 }

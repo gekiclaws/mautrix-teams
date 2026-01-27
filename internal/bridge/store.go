@@ -18,12 +18,14 @@ type TeamsThreadStore struct {
 	db         *database.Database
 	mu         sync.RWMutex
 	byThreadID map[string]id.RoomID
+	byRoomID   map[id.RoomID]string
 }
 
 func NewTeamsThreadStore(db *database.Database) *TeamsThreadStore {
 	return &TeamsThreadStore{
 		db:         db,
 		byThreadID: make(map[string]id.RoomID),
+		byRoomID:   make(map[id.RoomID]string),
 	}
 }
 
@@ -31,6 +33,7 @@ func (s *TeamsThreadStore) LoadAll() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.byThreadID = make(map[string]id.RoomID)
+	s.byRoomID = make(map[id.RoomID]string)
 	if s.db == nil || s.db.TeamsThread == nil {
 		return
 	}
@@ -39,6 +42,7 @@ func (s *TeamsThreadStore) LoadAll() {
 			continue
 		}
 		s.byThreadID[row.ThreadID] = row.RoomID
+		s.byRoomID[row.RoomID] = row.ThreadID
 	}
 }
 
@@ -47,6 +51,13 @@ func (s *TeamsThreadStore) Get(threadID string) (id.RoomID, bool) {
 	defer s.mu.RUnlock()
 	roomID, ok := s.byThreadID[threadID]
 	return roomID, ok
+}
+
+func (s *TeamsThreadStore) GetThreadID(roomID id.RoomID) (string, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	threadID, ok := s.byRoomID[roomID]
+	return threadID, ok
 }
 
 func (s *TeamsThreadStore) Put(thread model.Thread, roomID id.RoomID) error {
@@ -64,6 +75,7 @@ func (s *TeamsThreadStore) Put(thread model.Thread, roomID id.RoomID) error {
 	}
 	s.mu.Lock()
 	s.byThreadID[thread.ID] = roomID
+	s.byRoomID[roomID] = thread.ID
 	s.mu.Unlock()
 	return nil
 }

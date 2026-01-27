@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/rs/zerolog"
 
@@ -30,16 +31,27 @@ func (e ConversationsError) Error() string {
 
 type Client struct {
 	HTTP             *http.Client
+	Executor         *TeamsRequestExecutor
 	ConversationsURL string
 	MessagesURL      string
+	SendMessagesURL  string
 	Token            string
 	Log              *zerolog.Logger
 }
 
 func NewClient(httpClient *http.Client) *Client {
+	executor := &TeamsRequestExecutor{
+		HTTP:        httpClient,
+		Log:         zerolog.Nop(),
+		MaxRetries:  4,
+		BaseBackoff: 500 * time.Millisecond,
+		MaxBackoff:  10 * time.Second,
+	}
 	return &Client{
 		HTTP:             httpClient,
+		Executor:         executor,
 		ConversationsURL: defaultConversationsURL,
+		SendMessagesURL:  defaultSendMessagesURL,
 	}
 }
 

@@ -15,7 +15,7 @@ var ErrNotImplemented = errors.New("teams stub: not implemented")
 type Client struct {
 	State *discordgo.State
 
-	IsUser  bool
+	IsUser   bool
 	Identify discordgo.Identify
 
 	Client *http.Client

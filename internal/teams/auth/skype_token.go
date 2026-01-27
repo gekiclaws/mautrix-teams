@@ -24,12 +24,12 @@ type skypeTokenResponse struct {
 	} `json:"skypeToken"`
 }
 
-func (c *Client) AcquireSkypeToken(ctx context.Context, accessToken string) (string, int64, error) {
+func (c *Client) AcquireSkypeToken(ctx context.Context, accessToken string) (string, int64, string, error) {
 	if c.SkypeTokenEndpoint == "" {
-		return "", 0, errors.New("skype token endpoint not configured")
+		return "", 0, "", errors.New("skype token endpoint not configured")
 	}
 	if accessToken == "" {
-		return "", 0, errors.New("missing access token for skypetoken acquisition")
+		return "", 0, "", errors.New("missing access token for skypetoken acquisition")
 	}
 	if c.Log != nil {
 		c.Log.Info().Msg("Acquiring Teams skypetoken")
@@ -37,13 +37,13 @@ func (c *Client) AcquireSkypeToken(ctx context.Context, accessToken string) (str
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.SkypeTokenEndpoint, nil)
 	if err != nil {
-		return "", 0, err
+		return "", 0, "", err
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return "", 0, err
+		return "", 0, "", err
 	}
 	defer resp.Body.Close()
 
@@ -52,24 +52,24 @@ func (c *Client) AcquireSkypeToken(ctx context.Context, accessToken string) (str
 		if c.Log != nil {
 			c.Log.Error().Int("status", resp.StatusCode).Str("body_snippet", snippet).Msg("Failed to acquire skypetoken")
 		}
-		return "", 0, errors.New("skypetoken endpoint returned non-2xx status")
+		return "", 0, "", errors.New("skypetoken endpoint returned non-2xx status")
 	}
 
 	var payload skypeTokenResponse
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return "", 0, err
+		return "", 0, "", err
 	}
 
 	token := payload.SkypeToken.SkypeToken
 	if token == "" {
-		return "", 0, errors.New("skypetoken response missing token")
+		return "", 0, "", errors.New("skypetoken response missing token")
 	}
 
 	var expiresAt int64
 	if payload.SkypeToken.ExpiresIn > 0 {
 		expiresAt = time.Now().UTC().Add(time.Duration(payload.SkypeToken.ExpiresIn) * time.Second).Unix()
 	}
-	return token, expiresAt, nil
+	return token, expiresAt, payload.SkypeToken.SkypeID, nil
 }
 
 func (a *AuthState) HasValidSkypeToken(now time.Time) bool {

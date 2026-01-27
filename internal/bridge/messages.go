@@ -23,6 +23,14 @@ type MatrixSender interface {
 	SendText(roomID id.RoomID, body string, extra map[string]any) (id.EventID, error)
 }
 
+type SendIntentLookup interface {
+	GetByClientMessageID(clientMessageID string) *database.TeamsSendIntent
+}
+
+type TeamsMessageMapWriter interface {
+	Upsert(mapping *database.TeamsMessageMap) error
+}
+
 type BotMatrixSender struct {
 	Client *mautrix.Client
 }
@@ -50,21 +58,30 @@ type ProfileStore interface {
 }
 
 type MessageIngestor struct {
-	Lister   MessageLister
-	Sender   MatrixSender
-	Profiles ProfileStore
-	Log      zerolog.Logger
+	Lister           MessageLister
+	Sender           MatrixSender
+	Profiles         ProfileStore
+	SendIntents      SendIntentLookup
+	MessageMap       TeamsMessageMapWriter
+	ReactionIngestor MessageReactionIngestor
+	Log              zerolog.Logger
 }
 
-func (m *MessageIngestor) IngestThread(ctx context.Context, threadID string, conversationID string, roomID id.RoomID, lastSequenceID *string) (string, bool, error) {
+type IngestResult struct {
+	MessagesIngested int
+	LastSequenceID   string
+	Advanced         bool
+}
+
+func (m *MessageIngestor) IngestThread(ctx context.Context, threadID string, conversationID string, roomID id.RoomID, lastSequenceID *string) (IngestResult, error) {
 	if m == nil || m.Lister == nil {
-		return "", false, errors.New("missing message lister")
+		return IngestResult{}, errors.New("missing message lister")
 	}
 	if m.Sender == nil {
-		return "", false, errors.New("missing message sender")
+		return IngestResult{}, errors.New("missing message sender")
 	}
 	if conversationID == "" {
-		return "", false, errors.New("missing conversation id")
+		return IngestResult{}, errors.New("missing conversation id")
 	}
 
 	since := ""
@@ -74,12 +91,26 @@ func (m *MessageIngestor) IngestThread(ctx context.Context, threadID string, con
 
 	messages, err := m.Lister.ListMessages(ctx, conversationID, since)
 	if err != nil {
-		return "", false, err
+		return IngestResult{}, err
 	}
 
+	m.Log.Info().
+		Str("thread_id", threadID).
+		Int("count", len(messages)).
+		Msg("teams messages fetched")
+
 	lastSuccess := ""
+	messagesIngested := 0
+	reactionIngested := 0
+	ingestReactions := func(msg model.RemoteMessage, targetMXID id.EventID) {
+		if m.ReactionIngestor != nil {
+			reactionIngested++
+		}
+		m.ingestReactions(ctx, threadID, roomID, msg, targetMXID)
+	}
 	for _, msg := range messages {
 		if lastSequenceID != nil && model.CompareSequenceID(msg.SequenceID, *lastSequenceID) <= 0 {
+			ingestReactions(msg, "")
 			continue
 		}
 		if msg.Body == "" {
@@ -87,10 +118,11 @@ func (m *MessageIngestor) IngestThread(ctx context.Context, threadID string, con
 				Str("thread_id", threadID).
 				Str("seq", msg.SequenceID).
 				Msg("teams message skipped empty body")
+			ingestReactions(msg, "")
 			continue
 		}
 
-		m.Log.Info().
+		m.Log.Debug().
 			Str("thread_id", threadID).
 			Str("seq", msg.SequenceID).
 			Msg("teams message discovered")
@@ -165,17 +197,53 @@ func (m *MessageIngestor) IngestThread(ctx context.Context, threadID string, con
 			}
 		}
 
-		if _, err := m.Sender.SendText(roomID, msg.Body, extra); err != nil {
-			m.Log.Error().
-				Err(err).
-				Str("thread_id", threadID).
-				Str("room_id", roomID.String()).
-				Str("seq", msg.SequenceID).
-				Msg("failed to send matrix message")
-			return "", false, nil
+		var intentMXID id.EventID
+		if msg.ClientMessageID != "" && m.SendIntents != nil {
+			if intent := m.SendIntents.GetByClientMessageID(msg.ClientMessageID); intent != nil && intent.MXID != "" {
+				intentMXID = intent.MXID
+			}
 		}
 
-		m.Log.Info().
+		maybeMapMXID := intentMXID
+		if maybeMapMXID == "" {
+			eventID, err := m.Sender.SendText(roomID, msg.Body, extra)
+			if err != nil {
+				m.Log.Error().
+					Err(err).
+					Str("thread_id", threadID).
+					Str("room_id", roomID.String()).
+					Str("seq", msg.SequenceID).
+					Msg("failed to send matrix message")
+				return IngestResult{}, nil
+			}
+			messagesIngested++
+			maybeMapMXID = eventID
+		} else {
+			m.Log.Debug().
+				Str("thread_id", threadID).
+				Str("seq", msg.SequenceID).
+				Str("client_message_id", msg.ClientMessageID).
+				Str("event_id", maybeMapMXID.String()).
+				Msg("teams message matched existing send intent, skipping matrix send")
+		}
+		if m.MessageMap != nil && msg.MessageID != "" && maybeMapMXID != "" {
+			if err := m.MessageMap.Upsert(&database.TeamsMessageMap{
+				MXID:           maybeMapMXID,
+				ThreadID:       threadID,
+				TeamsMessageID: msg.MessageID,
+			}); err != nil {
+				m.Log.Error().
+					Err(err).
+					Str("thread_id", threadID).
+					Str("teams_message_id", msg.MessageID).
+					Str("event_id", maybeMapMXID.String()).
+					Msg("failed to persist teams message map")
+			}
+		}
+
+		ingestReactions(msg, maybeMapMXID)
+
+		m.Log.Debug().
 			Str("room_id", roomID.String()).
 			Str("seq", msg.SequenceID).
 			Msg("matrix message sent")
@@ -183,9 +251,40 @@ func (m *MessageIngestor) IngestThread(ctx context.Context, threadID string, con
 		lastSuccess = msg.SequenceID
 	}
 
-	if lastSuccess == "" {
-		return "", false, nil
+	if m.ReactionIngestor != nil {
+		m.Log.Info().
+			Str("thread_id", threadID).
+			Int("count", reactionIngested).
+			Msg("teams reactions ingested")
 	}
 
-	return lastSuccess, true, nil
+	if lastSuccess == "" {
+		return IngestResult{
+			MessagesIngested: messagesIngested,
+		}, nil
+	}
+
+	return IngestResult{
+		MessagesIngested: messagesIngested,
+		LastSequenceID:   lastSuccess,
+		Advanced:         true,
+	}, nil
+}
+
+type MessageReactionIngestor interface {
+	IngestMessageReactions(ctx context.Context, threadID string, roomID id.RoomID, msg model.RemoteMessage, targetMXID id.EventID) error
+}
+
+func (m *MessageIngestor) ingestReactions(ctx context.Context, threadID string, roomID id.RoomID, msg model.RemoteMessage, targetMXID id.EventID) {
+	if m == nil || m.ReactionIngestor == nil {
+		return
+	}
+	if err := m.ReactionIngestor.IngestMessageReactions(ctx, threadID, roomID, msg, targetMXID); err != nil {
+		m.Log.Error().
+			Err(err).
+			Str("thread_id", threadID).
+			Str("teams_message_id", msg.MessageID).
+			Str("seq", msg.SequenceID).
+			Msg("failed to ingest teams reactions")
+	}
 }

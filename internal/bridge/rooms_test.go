@@ -104,3 +104,141 @@ func TestDiscoverAndEnsureRoomsSkipsMissingID(t *testing.T) {
 		t.Fatalf("expected store to contain thread-3")
 	}
 }
+
+func TestTeamsThreadDiscovererSkipsMissingThreadID(t *testing.T) {
+	lister := &fakeLister{conversations: []model.RemoteConversation{
+		{ThreadProperties: model.ThreadProperties{OriginalThreadID: ""}},
+		{
+			ID: " @oneToOne.skype ",
+			ThreadProperties: model.ThreadProperties{
+				OriginalThreadID:  " thread-1 ",
+				ProductThreadType: "OneToOneChat",
+			},
+		},
+	}}
+
+	discoverer := &TeamsThreadDiscoverer{
+		Lister: lister,
+		Token:  "token123",
+		Log:    zerolog.Nop(),
+	}
+
+	threads, err := discoverer.Discover(context.Background())
+	if err != nil {
+		t.Fatalf("Discover failed: %v", err)
+	}
+	if len(threads) != 1 {
+		t.Fatalf("expected 1 thread, got %d", len(threads))
+	}
+	if threads[0].ID != "thread-1" {
+		t.Fatalf("unexpected thread ID: %q", threads[0].ID)
+	}
+}
+
+func TestTeamsThreadDiscovererNormalizesThreadFields(t *testing.T) {
+	lister := &fakeLister{conversations: []model.RemoteConversation{
+		{
+			ID: " @oneToOne.skype ",
+			ThreadProperties: model.ThreadProperties{
+				OriginalThreadID:  " thread-2 ",
+				ProductThreadType: "OneToOneChat",
+			},
+		},
+	}}
+
+	discoverer := &TeamsThreadDiscoverer{
+		Lister: lister,
+		Token:  "token123",
+		Log:    zerolog.Nop(),
+	}
+
+	threads, err := discoverer.Discover(context.Background())
+	if err != nil {
+		t.Fatalf("Discover failed: %v", err)
+	}
+	if len(threads) != 1 {
+		t.Fatalf("expected 1 thread, got %d", len(threads))
+	}
+
+	thread := threads[0]
+	if thread.ID != "thread-2" {
+		t.Fatalf("unexpected thread ID: %q", thread.ID)
+	}
+	if thread.ConversationID != "@oneToOne.skype" {
+		t.Fatalf("unexpected conversation ID: %q", thread.ConversationID)
+	}
+	if !thread.IsOneToOne {
+		t.Fatalf("expected IsOneToOne to be true")
+	}
+}
+
+func TestRefreshAndRegisterThreadsRegistersOnlyNew(t *testing.T) {
+	lister := &fakeLister{conversations: []model.RemoteConversation{
+		{ThreadProperties: model.ThreadProperties{OriginalThreadID: "thread-1", ProductThreadType: "GroupChat"}},
+		{ThreadProperties: model.ThreadProperties{OriginalThreadID: "thread-2", ProductThreadType: "GroupChat"}},
+	}}
+	discoverer := &TeamsThreadDiscoverer{
+		Lister: lister,
+		Token:  "token123",
+		Log:    zerolog.Nop(),
+	}
+
+	store := &fakeStore{rooms: map[string]id.RoomID{
+		"thread-1": "!existing:example.org",
+	}}
+	creator := &fakeCreator{roomID: "!created:example.org"}
+	rooms := NewRoomsService(store, creator, zerolog.Nop())
+
+	discovered, regs, err := RefreshAndRegisterThreads(context.Background(), discoverer, store, rooms, zerolog.Nop())
+	if err != nil {
+		t.Fatalf("RefreshAndRegisterThreads failed: %v", err)
+	}
+	if discovered != 2 {
+		t.Fatalf("unexpected discovered count: %d", discovered)
+	}
+	if creator.calls != 1 {
+		t.Fatalf("expected creator to be called once, got %d", creator.calls)
+	}
+	if len(regs) != 1 {
+		t.Fatalf("expected 1 registration, got %d", len(regs))
+	}
+	if regs[0].Thread.ID != "thread-2" {
+		t.Fatalf("unexpected registered thread: %q", regs[0].Thread.ID)
+	}
+	if regs[0].RoomID != "!created:example.org" {
+		t.Fatalf("unexpected room id: %q", regs[0].RoomID)
+	}
+}
+
+func TestRefreshAndRegisterThreadsNoNewThreadsNoCreates(t *testing.T) {
+	lister := &fakeLister{conversations: []model.RemoteConversation{
+		{ThreadProperties: model.ThreadProperties{OriginalThreadID: "thread-1", ProductThreadType: "GroupChat"}},
+		{ThreadProperties: model.ThreadProperties{OriginalThreadID: "thread-2", ProductThreadType: "GroupChat"}},
+	}}
+	discoverer := &TeamsThreadDiscoverer{
+		Lister: lister,
+		Token:  "token123",
+		Log:    zerolog.Nop(),
+	}
+
+	store := &fakeStore{rooms: map[string]id.RoomID{
+		"thread-1": "!one:example.org",
+		"thread-2": "!two:example.org",
+	}}
+	creator := &fakeCreator{roomID: "!created:example.org"}
+	rooms := NewRoomsService(store, creator, zerolog.Nop())
+
+	discovered, regs, err := RefreshAndRegisterThreads(context.Background(), discoverer, store, rooms, zerolog.Nop())
+	if err != nil {
+		t.Fatalf("RefreshAndRegisterThreads failed: %v", err)
+	}
+	if discovered != 2 {
+		t.Fatalf("unexpected discovered count: %d", discovered)
+	}
+	if creator.calls != 0 {
+		t.Fatalf("expected creator to not be called, got %d", creator.calls)
+	}
+	if len(regs) != 0 {
+		t.Fatalf("expected 0 registrations, got %d", len(regs))
+	}
+}
