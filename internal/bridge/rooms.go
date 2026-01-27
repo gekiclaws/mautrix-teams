@@ -11,7 +11,6 @@ import (
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
 
-	"go.mau.fi/mautrix-teams/internal/teams/client"
 	"go.mau.fi/mautrix-teams/internal/teams/model"
 )
 
@@ -191,29 +190,17 @@ type ConversationLister interface {
 }
 
 func DiscoverAndEnsureRooms(ctx context.Context, token string, lister ConversationLister, rooms *RoomsService, log zerolog.Logger) error {
-	if lister == nil {
-		return errors.New("missing conversation lister")
+	discoverer := &TeamsThreadDiscoverer{
+		Lister: lister,
+		Token:  token,
+		Log:    log,
 	}
-	convos, err := lister.ListConversations(ctx, token)
+	threads, err := discoverer.Discover(ctx)
 	if err != nil {
-		var convErr client.ConversationsError
-		if errors.As(err, &convErr) {
-			log.Error().
-				Int("status", convErr.Status).
-				Str("body_snippet", convErr.BodySnippet).
-				Msg("failed to list conversations")
-		} else {
-			log.Error().Err(err).Msg("failed to list conversations")
-		}
 		return err
 	}
 
-	for _, conv := range convos {
-		thread, ok := conv.Normalize()
-		if !ok {
-			log.Warn().Msg("skipping conversation with missing thread_id")
-			continue
-		}
+	for _, thread := range threads {
 		log.Info().
 			Str("thread_id", thread.ID).
 			Str("type", thread.Type).

@@ -9,6 +9,7 @@ import (
 
 	"github.com/rs/zerolog"
 
+	"go.mau.fi/mautrix-teams/database"
 	teamsbridge "go.mau.fi/mautrix-teams/internal/bridge"
 	"go.mau.fi/mautrix-teams/internal/teams/auth"
 	consumerclient "go.mau.fi/mautrix-teams/internal/teams/client"
@@ -86,6 +87,13 @@ func (br *DiscordBridge) runTeamsConsumerMessageSync(ctx context.Context, log ze
 
 	store := br.ensureTeamsThreadStore()
 	store.LoadAll()
+	creator := teamsbridge.NewIntentRoomCreator(br.Bot, &br.Config.Bridge)
+	rooms := teamsbridge.NewRoomsService(store, creator, log)
+	discoverer := &teamsbridge.TeamsThreadDiscoverer{
+		Lister: consumer,
+		Token:  state.SkypeToken,
+		Log:    log,
+	}
 
 	ingestor := teamsbridge.MessageIngestor{
 		Lister:      consumer,
@@ -113,6 +121,7 @@ func (br *DiscordBridge) runTeamsConsumerMessageSync(ctx context.Context, log ze
 
 	threads := br.DB.TeamsThread.GetAll()
 	log.Info().Int("threads", len(threads)).Msg("teams polling loop started")
+	newThreadsCh := make(chan *database.TeamsThread, 32)
 
 	type threadPollState struct {
 		Backoff    teamsbridge.PollBackoff
@@ -120,13 +129,16 @@ func (br *DiscordBridge) runTeamsConsumerMessageSync(ctx context.Context, log ze
 	}
 
 	const baseDelay = 2 * time.Second
+	const refreshInterval = 10 * time.Minute
 
 	states := make(map[string]*threadPollState, len(threads))
+	threadsByID := make(map[string]*database.TeamsThread, len(threads))
 	now := time.Now().UTC()
 	for _, thread := range threads {
 		if thread == nil || thread.ThreadID == "" {
 			continue
 		}
+		threadsByID[thread.ThreadID] = thread
 		states[thread.ThreadID] = &threadPollState{
 			Backoff: teamsbridge.PollBackoff{
 				Delay: baseDelay,
@@ -135,9 +147,79 @@ func (br *DiscordBridge) runTeamsConsumerMessageSync(ctx context.Context, log ze
 		}
 	}
 
+	registerThread := func(thread *database.TeamsThread) {
+		if thread == nil || thread.ThreadID == "" {
+			return
+		}
+		if _, exists := threadsByID[thread.ThreadID]; exists {
+			return
+		}
+		threadsByID[thread.ThreadID] = thread
+		threads = append(threads, thread)
+		states[thread.ThreadID] = &threadPollState{
+			Backoff:    teamsbridge.PollBackoff{Delay: baseDelay},
+			NextPollAt: time.Now().UTC(),
+		}
+	}
+
+	refreshOnce := func(refreshCtx context.Context) {
+		discovered := 0
+		newCount := 0
+		log.Info().Msg("teams thread discovery refresh start")
+		discovered, regs, err := teamsbridge.RefreshAndRegisterThreads(refreshCtx, discoverer, store, rooms, log)
+		if err != nil {
+			log.Warn().Err(err).Msg("teams thread discovery refresh failed")
+		} else {
+			newCount = len(regs)
+			for _, reg := range regs {
+				row := br.DB.TeamsThread.GetByThreadID(reg.Thread.ID)
+				if row == nil {
+					continue
+				}
+				select {
+				case newThreadsCh <- row:
+				case <-refreshCtx.Done():
+					return
+				}
+				log.Info().
+					Str("thread_id", reg.Thread.ID).
+					Str("room_id", reg.RoomID.String()).
+					Msg("teams thread registered")
+			}
+		}
+		log.Info().
+			Int("discovered", discovered).
+			Int("new", newCount).
+			Msg("teams thread discovery refresh complete")
+	}
+
+	go func() {
+		refreshOnce(ctx)
+		ticker := time.NewTicker(refreshInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				refreshOnce(ctx)
+			}
+		}
+	}()
+
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
+		}
+
+	forDrain:
+		for {
+			select {
+			case thread := <-newThreadsCh:
+				registerThread(thread)
+			default:
+				break forDrain
+			}
 		}
 
 		now = time.Now().UTC()
@@ -235,6 +317,14 @@ func (br *DiscordBridge) runTeamsConsumerMessageSync(ctx context.Context, log ze
 		case <-ctx.Done():
 			timer.Stop()
 			return ctx.Err()
+		case thread := <-newThreadsCh:
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			registerThread(thread)
 		case <-timer.C:
 		}
 	}
