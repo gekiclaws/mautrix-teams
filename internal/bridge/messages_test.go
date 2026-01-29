@@ -382,6 +382,41 @@ func TestIngestThreadUsesSendIntentMXIDForMessageMap(t *testing.T) {
 	}
 }
 
+func TestIngestThreadStoresMessageMetadataInMap(t *testing.T) {
+	ts := time.UnixMilli(1700000000123)
+	lister := &fakeMessageLister{
+		messages: []model.RemoteMessage{
+			{SequenceID: "1", MessageID: "m1", SenderID: "8:user-2", Timestamp: ts, Body: "one"},
+		},
+	}
+	sender := &fakeMatrixSender{}
+	messageMap := &fakeMessageMapWriter{}
+	ingestor := &MessageIngestor{
+		Lister:     lister,
+		Sender:     sender,
+		MessageMap: messageMap,
+		Log:        zerolog.New(io.Discard),
+	}
+
+	res, err := ingestor.IngestThread(context.Background(), "thread-1", "@oneToOne.skype", "!room:example", nil)
+	if err != nil {
+		t.Fatalf("IngestThread failed: %v", err)
+	}
+	if !res.Advanced {
+		t.Fatalf("expected advancement on success")
+	}
+	if len(messageMap.entries) != 1 {
+		t.Fatalf("expected one message map entry, got %d", len(messageMap.entries))
+	}
+	entry := messageMap.entries[0]
+	if entry.MessageTS == nil || *entry.MessageTS != ts.UnixMilli() {
+		t.Fatalf("unexpected message_ts: %#v", entry.MessageTS)
+	}
+	if entry.SenderID == nil || *entry.SenderID != "8:user-2" {
+		t.Fatalf("unexpected sender_id: %#v", entry.SenderID)
+	}
+}
+
 func TestIngestThreadSkipsSendButStillIngestsReactionsOnSendIntent(t *testing.T) {
 	lister := &fakeMessageLister{
 		messages: []model.RemoteMessage{
