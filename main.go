@@ -23,6 +23,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/rs/zerolog"
 	"go.mau.fi/util/configupgrade"
@@ -63,6 +64,8 @@ type TeamsBridge struct {
 
 	teamsAuthLock  sync.RWMutex
 	teamsAuthState *auth.AuthState
+	teamsRunLock   sync.Mutex
+	teamsRunning   bool
 
 	usersByMXID map[id.UserID]*User
 	usersByID   map[string]*User
@@ -129,9 +132,20 @@ func (br *TeamsBridge) Start() {
 	br.DMA = newDirectMediaAPI(br)
 	br.WaitWebsocketConnected()
 	go br.startUsers()
-	br.startTeamsConsumerRoomSync()
-	br.startTeamsConsumerMessageSync()
-	br.startTeamsConsumerSender()
+
+	state, authPath, err := br.loadTeamsAuthState()
+	if err != nil {
+		br.ZLog.Warn().Err(err).Str("auth_path", authPath).Msg("Teams auth not found; bridge is idle. Run `!login` after completing teams-login")
+		return
+	}
+	if err := validateTeamsAuthState(state, time.Now().UTC()); err != nil {
+		br.ZLog.Warn().Err(err).Str("auth_path", authPath).Msg("Teams auth not found; bridge is idle. Run `!login` after completing teams-login")
+		return
+	}
+	br.setTeamsAuthState(state)
+	if err := br.ensureTeamsConsumersRunning(); err != nil {
+		br.ZLog.Warn().Err(err).Str("auth_path", authPath).Msg("Teams auth present but failed to start consumers")
+	}
 }
 
 func (br *TeamsBridge) Stop() {

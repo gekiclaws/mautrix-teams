@@ -45,7 +45,15 @@ var cmdTeamsLogin = &commands.FullHandler{
 func fnTeamsLogin(ce *WrappedCommandEvent) {
 	now := time.Now().UTC()
 	if ce.Bridge.hasValidTeamsAuth(now) {
-		ce.Reply("Teams auth already active.")
+		if ce.Bridge.areTeamsConsumersRunning() {
+			ce.Reply("Teams auth already active.")
+			return
+		}
+		if err := ce.Bridge.ensureTeamsConsumersRunning(); err != nil {
+			ce.Reply("Teams auth is valid, but failed to start consumers: %v", err)
+			return
+		}
+		ce.Reply("Teams auth OK")
 		return
 	}
 
@@ -62,5 +70,9 @@ func fnTeamsLogin(ce *WrappedCommandEvent) {
 	}
 
 	ce.Bridge.setTeamsAuthState(state)
+	if err := ce.Bridge.ensureTeamsConsumersRunning(); err != nil {
+		ce.Reply("Teams auth is valid, but failed to start consumers: %v", err)
+		return
+	}
 	ce.Reply("Teams auth OK")
 }

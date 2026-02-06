@@ -14,12 +14,12 @@ import (
 	consumerclient "go.mau.fi/mautrix-teams/internal/teams/client"
 )
 
-func (br *TeamsBridge) startTeamsConsumerRoomSync() {
+func (br *TeamsBridge) startTeamsConsumerRoomSync(state *auth.AuthState) {
 	// All Teams → Matrix ingest begins here for the bridge process.
 	go func() {
 		br.WaitWebsocketConnected()
 		log := br.ZLog.With().Str("component", "teams-consumer").Logger()
-		if err := br.runTeamsConsumerRoomSync(context.Background(), log); err != nil {
+		if err := br.runTeamsConsumerRoomSync(context.Background(), log, state); err != nil {
 			var convErr consumerclient.ConversationsError
 			if errors.As(err, &convErr) {
 				return
@@ -29,17 +29,9 @@ func (br *TeamsBridge) startTeamsConsumerRoomSync() {
 	}()
 }
 
-func (br *TeamsBridge) runTeamsConsumerRoomSync(ctx context.Context, log zerolog.Logger) error {
-	if br.ConfigPath == "" {
-		return errors.New("missing config path")
-	}
-
-	state, _, err := loadTeamsConsumerAuth(br.ConfigPath, br.Config.Bridge.TeamsAuthPath)
-	if err != nil {
+func (br *TeamsBridge) runTeamsConsumerRoomSync(ctx context.Context, log zerolog.Logger, state *auth.AuthState) error {
+	if err := validateTeamsAuthState(state, time.Now().UTC()); err != nil {
 		return err
-	}
-	if state == nil || !state.HasValidSkypeToken(time.Now().UTC()) {
-		return errors.New("missing or expired skypetoken")
 	}
 
 	authClient := auth.NewClient(nil)
@@ -54,27 +46,19 @@ func (br *TeamsBridge) runTeamsConsumerRoomSync(ctx context.Context, log zerolog
 	return teamsbridge.DiscoverAndEnsureRooms(ctx, state.SkypeToken, consumer, rooms, log)
 }
 
-func (br *TeamsBridge) startTeamsConsumerMessageSync() {
+func (br *TeamsBridge) startTeamsConsumerMessageSync(state *auth.AuthState) {
 	go func() {
 		br.WaitWebsocketConnected()
 		log := br.ZLog.With().Str("component", "teams-consumer-sync").Logger()
-		if err := br.runTeamsConsumerMessageSync(context.Background(), log); err != nil {
+		if err := br.runTeamsConsumerMessageSync(context.Background(), log, state); err != nil {
 			log.Error().Err(err).Msg("Teams message sync failed")
 		}
 	}()
 }
 
-func (br *TeamsBridge) runTeamsConsumerMessageSync(ctx context.Context, log zerolog.Logger) error {
-	if br.ConfigPath == "" {
-		return errors.New("missing config path")
-	}
-
-	state, _, err := loadTeamsConsumerAuth(br.ConfigPath, br.Config.Bridge.TeamsAuthPath)
-	if err != nil {
+func (br *TeamsBridge) runTeamsConsumerMessageSync(ctx context.Context, log zerolog.Logger, state *auth.AuthState) error {
+	if err := validateTeamsAuthState(state, time.Now().UTC()); err != nil {
 		return err
-	}
-	if state == nil || !state.HasValidSkypeToken(time.Now().UTC()) {
-		return errors.New("missing or expired skypetoken")
 	}
 
 	authClient := auth.NewClient(nil)
@@ -357,23 +341,16 @@ func (br *TeamsBridge) runTeamsConsumerMessageSync(ctx context.Context, log zero
 	}
 }
 
-func (br *TeamsBridge) startTeamsConsumerSender() {
+func (br *TeamsBridge) startTeamsConsumerSender(state *auth.AuthState) {
 	log := br.ZLog.With().Str("component", "teams-consumer-send").Logger()
-	if err := br.initTeamsConsumerSender(log); err != nil {
+	if err := br.initTeamsConsumerSender(log, state); err != nil {
 		log.Warn().Err(err).Msg("Teams consumer sender unavailable")
 	}
 }
 
-func (br *TeamsBridge) initTeamsConsumerSender(log zerolog.Logger) error {
-	if br.ConfigPath == "" {
-		return errors.New("missing config path")
-	}
-	state, _, err := loadTeamsConsumerAuth(br.ConfigPath, br.Config.Bridge.TeamsAuthPath)
-	if err != nil {
+func (br *TeamsBridge) initTeamsConsumerSender(log zerolog.Logger, state *auth.AuthState) error {
+	if err := validateTeamsAuthState(state, time.Now().UTC()); err != nil {
 		return err
-	}
-	if state == nil || !state.HasValidSkypeToken(time.Now().UTC()) {
-		return errors.New("missing or expired skypetoken")
 	}
 	if state.TeamsUserID == "" {
 		return errors.New("missing teams user id")

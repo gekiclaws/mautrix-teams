@@ -10,8 +10,8 @@ Phase 2 – Implement Teams login command
 ☑ Add a `cmdTeamsLogin` handler that loads/validates `auth.json`, reports actionable errors, and stores the successful auth state in the bridge.
 ☑ Exercise the new helper with targeted unit tests for missing file, expired token, and success cases.
 Phase 3 – Wire Teams auth into lifecycle
-☐ Load/ cache `auth.json` during `Start()`, gate the Teams consumer loops on a valid Skype token, and reuse the cached state from the `!login` handler (including restarting loops after login).
-☐ Add unit tests that cover missing auth, valid auth, and log expectations around loop startup.
+☑ Load/ cache `auth.json` during `Start()`, gate the Teams consumer loops on a valid Skype token, and reuse the cached state from the `!login` handler (including restarting loops after login).
+☑ Add unit tests that cover missing auth, valid auth, and log expectations around loop startup.
 Phase 4 – Add guardrails and logging
 ☐ Surround auth loading/polling with descriptive logs/errors (including expiry handling) and ensure client init paths fail fast without panicking.
 ☐ Add unit tests that assert the new logging/guardrail helpers (e.g., `resolveAuthPath`, auth validation) behave correctly.

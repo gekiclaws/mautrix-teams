@@ -78,20 +78,3 @@ func (br *TeamsBridge) loadTeamsAuthState() (*auth.AuthState, string, error) {
 	}
 	return loadTeamsConsumerAuth(br.ConfigPath, br.Config.Bridge.TeamsAuthPath)
 }
-
-func (br *TeamsBridge) setTeamsAuthState(state *auth.AuthState) {
-	br.teamsAuthLock.Lock()
-	defer br.teamsAuthLock.Unlock()
-	br.teamsAuthState = state
-}
-
-func (br *TeamsBridge) getTeamsAuthState() *auth.AuthState {
-	br.teamsAuthLock.RLock()
-	defer br.teamsAuthLock.RUnlock()
-	return br.teamsAuthState
-}
-
-func (br *TeamsBridge) hasValidTeamsAuth(now time.Time) bool {
-	state := br.getTeamsAuthState()
-	return validateTeamsAuthState(state, now.UTC()) == nil
-}
