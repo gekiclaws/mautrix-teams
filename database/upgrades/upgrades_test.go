@@ -33,4 +33,7 @@ func TestUpgradesIncludeTeamsSendIntent(t *testing.T) {
 	if err := db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='teams_reaction'").Scan(&name); err != nil {
 		t.Fatalf("teams_reaction table missing: %v", err)
 	}
+	if err := db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='teams_consumption_horizon'").Scan(&name); err != nil {
+		t.Fatalf("teams_consumption_horizon table missing: %v", err)
+	}
 }

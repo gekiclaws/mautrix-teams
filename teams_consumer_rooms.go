@@ -94,13 +94,17 @@ func (br *DiscordBridge) runTeamsConsumerMessageSync(ctx context.Context, log ze
 		Token:  state.SkypeToken,
 		Log:    log,
 	}
+	if br.TeamsUnreadCycles == nil {
+		br.TeamsUnreadCycles = teamsbridge.NewUnreadCycleTracker()
+	}
 
 	ingestor := teamsbridge.MessageIngestor{
-		Lister:      consumer,
-		Sender:      &teamsbridge.BotMatrixSender{Client: br.Bot.Client},
-		Profiles:    br.DB.TeamsProfile,
-		SendIntents: br.DB.TeamsSendIntent,
-		MessageMap:  br.DB.TeamsMessageMap,
+		Lister:        consumer,
+		Sender:        &teamsbridge.BotMatrixSender{Client: br.Bot.Client},
+		Profiles:      br.DB.TeamsProfile,
+		SendIntents:   br.DB.TeamsSendIntent,
+		MessageMap:    br.DB.TeamsMessageMap,
+		UnreadTracker: br.TeamsUnreadCycles,
 		ReactionIngestor: &teamsbridge.TeamsReactionIngestor{
 			Sender:    &teamsbridge.BotMatrixReactionSender{Client: br.Bot.Client},
 			Messages:  br.DB.TeamsMessageMap,
@@ -117,6 +121,20 @@ func (br *DiscordBridge) runTeamsConsumerMessageSync(ctx context.Context, log ze
 	consumerIngestor := teamsbridge.TeamsConsumerIngestor{
 		Syncer: &syncer,
 		Log:    log,
+	}
+	if strings.TrimSpace(state.TeamsUserID) != "" {
+		readReceiptLog := log.With().Str("component", "teams-consumer-read-receipts").Logger()
+		readReceiptSender := &teamsbridge.BotMatrixReadMarkerSender{Client: br.Bot.Client}
+		consumerIngestor.ReadReceipts = teamsbridge.NewTeamsConsumptionHorizonIngestor(
+			consumer,
+			br.DB.TeamsMessageMap,
+			br.DB.TeamsConsumptionHorizon,
+			readReceiptSender,
+			state.TeamsUserID,
+			readReceiptLog,
+		)
+	} else {
+		log.Warn().Msg("teams consumption horizons disabled: missing teams user id")
 	}
 
 	threads := br.DB.TeamsThread.GetAll()
@@ -371,8 +389,13 @@ func (br *DiscordBridge) initTeamsConsumerSender(log zerolog.Logger) error {
 
 	store := br.ensureTeamsThreadStore()
 	store.LoadAll()
+	if br.TeamsUnreadCycles == nil {
+		br.TeamsUnreadCycles = teamsbridge.NewUnreadCycleTracker()
+	}
 	br.TeamsConsumerSender = teamsbridge.NewTeamsConsumerSender(consumer, br.DB.TeamsSendIntent, store, state.TeamsUserID, log)
 	br.TeamsConsumerReactor = teamsbridge.NewTeamsConsumerReactor(consumer, store, br.DB.TeamsMessageMap, br.DB.TeamsReactionMap, log)
+	br.TeamsConsumerTyper = teamsbridge.NewTeamsConsumerTyper(consumer, store, state.TeamsUserID, log)
+	br.TeamsConsumerReceipt = teamsbridge.NewTeamsConsumerReceiptSender(consumer, store, br.TeamsUnreadCycles, log)
 	return nil
 }
 

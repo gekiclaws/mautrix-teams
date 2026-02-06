@@ -91,6 +91,9 @@ type DiscordBridge struct {
 	TeamsThreadStore     *teamsbridge.TeamsThreadStore
 	TeamsConsumerSender  *teamsbridge.TeamsConsumerSender
 	TeamsConsumerReactor *teamsbridge.TeamsConsumerReactor
+	TeamsConsumerTyper   *teamsbridge.TeamsConsumerTyper
+	TeamsUnreadCycles    *teamsbridge.UnreadCycleTracker
+	TeamsConsumerReceipt *teamsbridge.TeamsConsumerReceiptSender
 }
 
 func (br *DiscordBridge) GetExampleConfig() string {
@@ -182,6 +185,12 @@ func (br *DiscordBridge) CreatePrivatePortal(id id.RoomID, user bridge.User, gho
 }
 
 func main() {
+	if handled, exitCode := runDevReadReceiptIfRequested(os.Args[1:]); handled {
+		os.Exit(exitCode)
+	}
+	if handled, exitCode := runDevTypingIfRequested(os.Args[1:]); handled {
+		os.Exit(exitCode)
+	}
 	if handled, exitCode := runDevSendIfRequested(os.Args[1:]); handled {
 		os.Exit(exitCode)
 	}

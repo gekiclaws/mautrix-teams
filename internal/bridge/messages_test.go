@@ -113,6 +113,14 @@ func (f *fakeReactionIngestor) IngestMessageReactions(ctx context.Context, threa
 	return nil
 }
 
+type fakeUnreadTracker struct {
+	rooms []id.RoomID
+}
+
+func (f *fakeUnreadTracker) MarkUnread(roomID id.RoomID) {
+	f.rooms = append(f.rooms, roomID)
+}
+
 func TestIngestThreadFiltersBySequence(t *testing.T) {
 	lister := &fakeMessageLister{
 		messages: []model.RemoteMessage{
@@ -374,6 +382,41 @@ func TestIngestThreadUsesSendIntentMXIDForMessageMap(t *testing.T) {
 	}
 }
 
+func TestIngestThreadStoresMessageMetadataInMap(t *testing.T) {
+	ts := time.UnixMilli(1700000000123)
+	lister := &fakeMessageLister{
+		messages: []model.RemoteMessage{
+			{SequenceID: "1", MessageID: "m1", SenderID: "8:user-2", Timestamp: ts, Body: "one"},
+		},
+	}
+	sender := &fakeMatrixSender{}
+	messageMap := &fakeMessageMapWriter{}
+	ingestor := &MessageIngestor{
+		Lister:     lister,
+		Sender:     sender,
+		MessageMap: messageMap,
+		Log:        zerolog.New(io.Discard),
+	}
+
+	res, err := ingestor.IngestThread(context.Background(), "thread-1", "@oneToOne.skype", "!room:example", nil)
+	if err != nil {
+		t.Fatalf("IngestThread failed: %v", err)
+	}
+	if !res.Advanced {
+		t.Fatalf("expected advancement on success")
+	}
+	if len(messageMap.entries) != 1 {
+		t.Fatalf("expected one message map entry, got %d", len(messageMap.entries))
+	}
+	entry := messageMap.entries[0]
+	if entry.MessageTS == nil || *entry.MessageTS != ts.UnixMilli() {
+		t.Fatalf("unexpected message_ts: %#v", entry.MessageTS)
+	}
+	if entry.SenderID == nil || *entry.SenderID != "8:user-2" {
+		t.Fatalf("unexpected sender_id: %#v", entry.SenderID)
+	}
+}
+
 func TestIngestThreadSkipsSendButStillIngestsReactionsOnSendIntent(t *testing.T) {
 	lister := &fakeMessageLister{
 		messages: []model.RemoteMessage{
@@ -415,6 +458,60 @@ func TestIngestThreadSkipsSendButStillIngestsReactionsOnSendIntent(t *testing.T)
 	}
 	if len(reactions.targetMXIDs) != 1 || reactions.targetMXIDs[0] != "$original" {
 		t.Fatalf("expected reactions to target original mxid, got %#v", reactions.targetMXIDs)
+	}
+}
+
+func TestIngestThreadMarksUnreadForInboundMessages(t *testing.T) {
+	lister := &fakeMessageLister{
+		messages: []model.RemoteMessage{
+			{SequenceID: "1", MessageID: "m1", Body: "one"},
+		},
+	}
+	sender := &fakeMatrixSender{}
+	unread := &fakeUnreadTracker{}
+	ingestor := &MessageIngestor{
+		Lister:        lister,
+		Sender:        sender,
+		UnreadTracker: unread,
+		Log:           zerolog.New(io.Discard),
+	}
+
+	_, err := ingestor.IngestThread(context.Background(), "thread-1", "@oneToOne.skype", "!room:example", nil)
+	if err != nil {
+		t.Fatalf("IngestThread failed: %v", err)
+	}
+	if len(unread.rooms) != 1 || unread.rooms[0] != "!room:example" {
+		t.Fatalf("expected unread marker for room, got %#v", unread.rooms)
+	}
+}
+
+func TestIngestThreadDoesNotMarkUnreadForSendIntentEcho(t *testing.T) {
+	lister := &fakeMessageLister{
+		messages: []model.RemoteMessage{
+			{SequenceID: "1", MessageID: "m1", ClientMessageID: "c1", Body: "one"},
+		},
+	}
+	sender := &fakeMatrixSender{}
+	unread := &fakeUnreadTracker{}
+	sendIntents := &fakeSendIntentLookup{
+		byClientMessageID: map[string]*database.TeamsSendIntent{
+			"c1": {MXID: id.EventID("$original")},
+		},
+	}
+	ingestor := &MessageIngestor{
+		Lister:        lister,
+		Sender:        sender,
+		SendIntents:   sendIntents,
+		UnreadTracker: unread,
+		Log:           zerolog.New(io.Discard),
+	}
+
+	_, err := ingestor.IngestThread(context.Background(), "thread-1", "@oneToOne.skype", "!room:example", nil)
+	if err != nil {
+		t.Fatalf("IngestThread failed: %v", err)
+	}
+	if len(unread.rooms) != 0 {
+		t.Fatalf("expected no unread marker for send intent echo, got %#v", unread.rooms)
 	}
 }
 

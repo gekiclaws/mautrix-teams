@@ -15,21 +15,22 @@ import (
 type Database struct {
 	*dbutil.Database
 
-	User             *UserQuery
-	Portal           *PortalQuery
-	Puppet           *PuppetQuery
-	Message          *MessageQuery
-	Thread           *ThreadQuery
-	Reaction         *ReactionQuery
-	Guild            *GuildQuery
-	Role             *RoleQuery
-	File             *FileQuery
-	TeamsThread      *TeamsThreadQuery
-	TeamsProfile     *TeamsProfileQuery
-	TeamsSendIntent  *TeamsSendIntentQuery
-	TeamsMessageMap  *TeamsMessageMapQuery
-	TeamsReactionMap *TeamsReactionMapQuery
-	TeamsReaction    *TeamsReactionStateQuery
+	User                    *UserQuery
+	Portal                  *PortalQuery
+	Puppet                  *PuppetQuery
+	Message                 *MessageQuery
+	Thread                  *ThreadQuery
+	Reaction                *ReactionQuery
+	Guild                   *GuildQuery
+	Role                    *RoleQuery
+	File                    *FileQuery
+	TeamsThread             *TeamsThreadQuery
+	TeamsProfile            *TeamsProfileQuery
+	TeamsSendIntent         *TeamsSendIntentQuery
+	TeamsMessageMap         *TeamsMessageMapQuery
+	TeamsReactionMap        *TeamsReactionMapQuery
+	TeamsReaction           *TeamsReactionStateQuery
+	TeamsConsumptionHorizon *TeamsConsumptionHorizonQuery
 }
 
 func New(baseDB *dbutil.Database, log maulogger.Logger) *Database {
@@ -94,6 +95,10 @@ func New(baseDB *dbutil.Database, log maulogger.Logger) *Database {
 	db.TeamsReaction = &TeamsReactionStateQuery{
 		db:  db,
 		log: log.Sub("TeamsReaction"),
+	}
+	db.TeamsConsumptionHorizon = &TeamsConsumptionHorizonQuery{
+		db:  db,
+		log: log.Sub("TeamsConsumptionHorizon"),
 	}
 	return db
 }
