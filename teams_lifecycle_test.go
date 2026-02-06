@@ -32,3 +32,10 @@ func TestEnsureTeamsConsumersRunningIsIdempotent(t *testing.T) {
 		t.Fatalf("expected consumers to stay marked running")
 	}
 }
+
+func TestValidateTeamsRuntimePrereqs(t *testing.T) {
+	br := &TeamsBridge{}
+	if err := br.validateTeamsRuntimePrereqs(); err == nil {
+		t.Fatalf("expected config precondition error")
+	}
+}

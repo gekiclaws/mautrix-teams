@@ -63,6 +63,10 @@ func fnTeamsLogin(ce *WrappedCommandEvent) {
 		ce.Reply("Run `teams-login -c %s` and try `$cmdprefix login` again.", ce.Bridge.ConfigPath)
 		return
 	}
+	ce.Bridge.ZLog.Info().
+		Str("auth_path", authPath).
+		Time("skypetoken_expires_at", time.Unix(state.SkypeTokenExpiresAt, 0).UTC()).
+		Msg("Loaded Teams auth state from login command")
 	if err := validateTeamsAuthState(state, now); err != nil {
 		ce.Reply("Teams auth is not usable: %v", err)
 		ce.Reply("Run `teams-login -c %s` and try `$cmdprefix login` again.", ce.Bridge.ConfigPath)

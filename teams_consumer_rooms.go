@@ -33,6 +33,9 @@ func (br *TeamsBridge) runTeamsConsumerRoomSync(ctx context.Context, log zerolog
 	if err := validateTeamsAuthState(state, time.Now().UTC()); err != nil {
 		return err
 	}
+	log.Info().
+		Time("skypetoken_expires_at", time.Unix(state.SkypeTokenExpiresAt, 0).UTC()).
+		Msg("Initializing Teams room discovery")
 
 	authClient := auth.NewClient(nil)
 	authClient.Log = &log
@@ -60,6 +63,9 @@ func (br *TeamsBridge) runTeamsConsumerMessageSync(ctx context.Context, log zero
 	if err := validateTeamsAuthState(state, time.Now().UTC()); err != nil {
 		return err
 	}
+	log.Info().
+		Time("skypetoken_expires_at", time.Unix(state.SkypeTokenExpiresAt, 0).UTC()).
+		Msg("Initializing Teams message sync")
 
 	authClient := auth.NewClient(nil)
 	authClient.Log = &log
@@ -355,6 +361,10 @@ func (br *TeamsBridge) initTeamsConsumerSender(log zerolog.Logger, state *auth.A
 	if state.TeamsUserID == "" {
 		return errors.New("missing teams user id")
 	}
+	log.Info().
+		Str("teams_user_id", state.TeamsUserID).
+		Time("skypetoken_expires_at", time.Unix(state.SkypeTokenExpiresAt, 0).UTC()).
+		Msg("Initializing Teams consumer sender")
 
 	authClient := auth.NewClient(nil)
 	authClient.Log = &log
