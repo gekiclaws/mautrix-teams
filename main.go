@@ -19,6 +19,7 @@ package main
 import (
 	"context"
 	_ "embed"
+	"errors"
 	"net/http"
 	"os"
 	"strings"
@@ -135,7 +136,14 @@ func (br *TeamsBridge) Start() {
 
 	state, err := br.LoadTeamsAuth(time.Now().UTC())
 	if err != nil {
-		br.ZLog.Warn().Err(err).Msg("Teams auth unavailable; bridge is idle. Run `!login` after completing teams-login")
+		switch {
+		case errors.Is(err, ErrTeamsAuthExpiredToken):
+			br.ZLog.Warn().Err(err).Msg("Teams auth expired; bridge is idle. Re-run teams-login and then `!login`")
+		case errors.Is(err, ErrTeamsAuthMissingFile), errors.Is(err, ErrTeamsAuthMissingState), errors.Is(err, ErrTeamsAuthMissingToken):
+			br.ZLog.Warn().Err(err).Msg("Teams auth missing; bridge is idle. Run teams-login and then `!login`")
+		default:
+			br.ZLog.Warn().Err(err).Msg("Teams auth unavailable; bridge is idle. Run `!login` after completing teams-login")
+		}
 		return
 	}
 

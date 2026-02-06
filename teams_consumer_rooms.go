@@ -49,9 +49,12 @@ func (br *TeamsBridge) runTeamsConsumerRoomSync(ctx context.Context, log zerolog
 	return teamsbridge.DiscoverAndEnsureRooms(ctx, state.SkypeToken, consumer, rooms, log)
 }
 
-func (br *TeamsBridge) startTeamsConsumerMessageSync(ctx context.Context, state *auth.AuthState) {
+func (br *TeamsBridge) startTeamsConsumerMessageSync(ctx context.Context, state *auth.AuthState) error {
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if err := validateTeamsAuthState(state, time.Now().UTC()); err != nil {
+		return err
 	}
 	go func() {
 		br.WaitWebsocketConnected()
@@ -60,6 +63,7 @@ func (br *TeamsBridge) startTeamsConsumerMessageSync(ctx context.Context, state 
 			log.Error().Err(err).Msg("Teams message sync failed")
 		}
 	}()
+	return nil
 }
 
 func (br *TeamsBridge) runTeamsConsumerMessageSync(ctx context.Context, log zerolog.Logger, state *auth.AuthState) error {

@@ -8,7 +8,7 @@ Phase 1 – Bridge auth wiring
 Phase 2 – Teams consumer reactor activation
 ☑ Introduce `StartTeamsConsumers(ctx, state)` that can run once per valid auth and only starts the read-only Teams consumer reactor (the current message-sync loop).
 Phase 3 – Guardrails and observability
-☐ Harden the new auth/consumer helpers so missing or expired auth objects are logged/reported, no panics occur, and tests cover both success and failure paths.
+☑ Harden the new auth/consumer helpers so missing or expired auth objects are logged/reported, no panics occur, and tests cover both success and failure paths.
 
 Phase 1 – Bridge-level Teams auth loader
 Files & summaries

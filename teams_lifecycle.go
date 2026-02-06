@@ -11,8 +11,7 @@ import (
 )
 
 var startTeamsConsumerReactorFn = func(br *TeamsBridge, ctx context.Context, state *auth.AuthState) error {
-	br.startTeamsConsumerMessageSync(ctx, state)
-	return nil
+	return br.startTeamsConsumerMessageSync(ctx, state)
 }
 
 func (br *TeamsBridge) StartTeamsConsumers(ctx context.Context, state *auth.AuthState) error {
@@ -20,6 +19,11 @@ func (br *TeamsBridge) StartTeamsConsumers(ctx context.Context, state *auth.Auth
 		ctx = context.Background()
 	}
 	log := br.teamsLifecycleLogger()
+	if br == nil {
+		err := errors.New("bridge is nil")
+		log.Warn().Err(err).Msg("Teams consumers skipped: runtime prerequisites missing")
+		return err
+	}
 
 	br.teamsRunLock.Lock()
 	defer br.teamsRunLock.Unlock()
@@ -71,11 +75,17 @@ func (br *TeamsBridge) getTeamsAuthState() *auth.AuthState {
 }
 
 func (br *TeamsBridge) hasValidTeamsAuth(now time.Time) bool {
+	if br == nil {
+		return false
+	}
 	state := br.getTeamsAuthState()
 	return validateTeamsAuthState(state, now.UTC()) == nil
 }
 
 func (br *TeamsBridge) areTeamsConsumersRunning() bool {
+	if br == nil {
+		return false
+	}
 	br.teamsRunLock.Lock()
 	defer br.teamsRunLock.Unlock()
 	return br.teamsRunning

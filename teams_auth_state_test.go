@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -158,6 +159,9 @@ func TestLoadTeamsAuth(t *testing.T) {
 				}
 				if expiresAt.Unix() != 1 {
 					t.Fatalf("unexpected expiry: %v", expiresAt)
+				}
+				if !strings.Contains(err.Error(), "1970-01-01T00:00:01Z") {
+					t.Fatalf("expected expiry timestamp in error, got %q", err.Error())
 				}
 			},
 		},

@@ -37,6 +37,41 @@ func TestStartTeamsConsumersRequiresValidAuth(t *testing.T) {
 	}
 }
 
+func TestStartTeamsConsumersNilBridge(t *testing.T) {
+	var br *TeamsBridge
+	if err := br.StartTeamsConsumers(context.Background(), &auth.AuthState{}); err == nil {
+		t.Fatalf("expected nil bridge error")
+	}
+}
+
+func TestStartTeamsConsumersRejectsExpiredAuth(t *testing.T) {
+	br := newRuntimeReadyBridgeForLifecycleTests()
+	state := &auth.AuthState{
+		SkypeToken:          "token",
+		SkypeTokenExpiresAt: time.Now().UTC().Add(-time.Minute).Unix(),
+	}
+	calls := 0
+	originalStarter := startTeamsConsumerReactorFn
+	startTeamsConsumerReactorFn = func(_ *TeamsBridge, _ context.Context, _ *auth.AuthState) error {
+		calls++
+		return nil
+	}
+	defer func() {
+		startTeamsConsumerReactorFn = originalStarter
+	}()
+
+	err := br.StartTeamsConsumers(context.Background(), state)
+	if !errors.Is(err, ErrTeamsAuthExpiredToken) {
+		t.Fatalf("expected expired token error, got %v", err)
+	}
+	if calls != 0 {
+		t.Fatalf("starter should not run on expired auth")
+	}
+	if br.areTeamsConsumersRunning() {
+		t.Fatalf("consumers should remain stopped on expired auth")
+	}
+}
+
 func TestStartTeamsConsumersIsIdempotent(t *testing.T) {
 	br := newRuntimeReadyBridgeForLifecycleTests()
 	state := &auth.AuthState{
