@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -35,7 +34,7 @@ func (br *TeamsBridge) runTeamsConsumerRoomSync(ctx context.Context, log zerolog
 		return errors.New("missing config path")
 	}
 
-	state, err := loadTeamsConsumerAuth(br.ConfigPath)
+	state, _, err := loadTeamsConsumerAuth(br.ConfigPath, br.Config.Bridge.TeamsAuthPath)
 	if err != nil {
 		return err
 	}
@@ -70,7 +69,7 @@ func (br *TeamsBridge) runTeamsConsumerMessageSync(ctx context.Context, log zero
 		return errors.New("missing config path")
 	}
 
-	state, err := loadTeamsConsumerAuth(br.ConfigPath)
+	state, _, err := loadTeamsConsumerAuth(br.ConfigPath, br.Config.Bridge.TeamsAuthPath)
 	if err != nil {
 		return err
 	}
@@ -369,7 +368,7 @@ func (br *TeamsBridge) initTeamsConsumerSender(log zerolog.Logger) error {
 	if br.ConfigPath == "" {
 		return errors.New("missing config path")
 	}
-	state, err := loadTeamsConsumerAuth(br.ConfigPath)
+	state, _, err := loadTeamsConsumerAuth(br.ConfigPath, br.Config.Bridge.TeamsAuthPath)
 	if err != nil {
 		return err
 	}
@@ -404,17 +403,4 @@ func (br *TeamsBridge) ensureTeamsThreadStore() *teamsbridge.TeamsThreadStore {
 		br.TeamsThreadStore = teamsbridge.NewTeamsThreadStore(br.DB)
 	}
 	return br.TeamsThreadStore
-}
-
-func loadTeamsConsumerAuth(configPath string) (*auth.AuthState, error) {
-	stateDir := filepath.Dir(configPath)
-	authPath := filepath.Join(stateDir, "auth.json")
-
-	stateStore := auth.NewStateStore(authPath)
-	state, err := stateStore.Load()
-	if err != nil {
-		return nil, err
-	}
-
-	return state, nil
 }

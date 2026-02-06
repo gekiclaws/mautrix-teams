@@ -36,6 +36,7 @@ import (
 	"go.mau.fi/mautrix-teams/config"
 	"go.mau.fi/mautrix-teams/database"
 	teamsbridge "go.mau.fi/mautrix-teams/internal/bridge"
+	auth "go.mau.fi/mautrix-teams/internal/teams/auth"
 	"go.mau.fi/mautrix-teams/teams"
 	teamsauth "go.mau.fi/mautrix-teams/teams/auth"
 	"go.mau.fi/mautrix-teams/teams/poll"
@@ -59,6 +60,9 @@ type TeamsBridge struct {
 	DB     *database.Database
 
 	DMA *DirectMediaAPI
+
+	teamsAuthLock  sync.RWMutex
+	teamsAuthState *auth.AuthState
 
 	usersByMXID map[id.UserID]*User
 	usersByID   map[string]*User

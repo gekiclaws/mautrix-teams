@@ -59,6 +59,8 @@ type BridgeConfig struct {
 
 	Proxy string `yaml:"proxy"`
 
+	TeamsAuthPath string `yaml:"teams_auth_path"`
+
 	CacheMedia  string      `yaml:"cache_media"`
 	DirectMedia DirectMedia `yaml:"direct_media"`
 

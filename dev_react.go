@@ -86,7 +86,7 @@ func runDevReact(args []string) error {
 		return err
 	}
 
-	state, err := loadTeamsConsumerAuth(opts.ConfigPath)
+	state, _, err := loadTeamsConsumerAuth(opts.ConfigPath, "")
 	if err != nil {
 		return err
 	}

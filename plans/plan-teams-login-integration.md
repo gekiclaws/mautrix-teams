@@ -7,8 +7,8 @@ Phase 1 – Remove Discord-specific legacy
 ☑ Rename the bridge/user abstractions to Teams-centric names, drop Discord-only command handlers/imports, and prune `RegisterCommands()` to its Teams subset.
 ☑ Clean up any user/session metadata and provisioning references that are purely Discord constructs.
 Phase 2 – Implement Teams login command
-☐ Add a `cmdTeamsLogin` handler that loads/validates `auth.json`, reports actionable errors, and stores the successful auth state in the bridge.
-☐ Exercise the new helper with targeted unit tests for missing file, expired token, and success cases.
+☑ Add a `cmdTeamsLogin` handler that loads/validates `auth.json`, reports actionable errors, and stores the successful auth state in the bridge.
+☑ Exercise the new helper with targeted unit tests for missing file, expired token, and success cases.
 Phase 3 – Wire Teams auth into lifecycle
 ☐ Load/ cache `auth.json` during `Start()`, gate the Teams consumer loops on a valid Skype token, and reuse the cached state from the `!login` handler (including restarting loops after login).
 ☐ Add unit tests that cover missing auth, valid auth, and log expectations around loop startup.
