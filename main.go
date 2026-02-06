@@ -133,23 +133,16 @@ func (br *TeamsBridge) Start() {
 	br.WaitWebsocketConnected()
 	go br.startUsers()
 
-	br.ZLog.Info().Msg("Loading Teams auth state")
-	state, authPath, err := br.loadTeamsAuthState()
+	state, err := br.LoadTeamsAuth(time.Now().UTC())
 	if err != nil {
-		br.ZLog.Warn().Err(err).Str("auth_path", authPath).Msg("Teams auth not found; bridge is idle. Run `!login` after completing teams-login")
+		br.ZLog.Warn().Err(err).Msg("Teams auth unavailable; bridge is idle. Run `!login` after completing teams-login")
 		return
 	}
-	br.ZLog.Info().
-		Str("auth_path", authPath).
-		Time("skypetoken_expires_at", time.Unix(state.SkypeTokenExpiresAt, 0).UTC()).
-		Msg("Loaded Teams auth state")
-	if err := validateTeamsAuthState(state, time.Now().UTC()); err != nil {
-		br.ZLog.Warn().Err(err).Str("auth_path", authPath).Msg("Teams auth not found; bridge is idle. Run `!login` after completing teams-login")
-		return
-	}
+
 	br.setTeamsAuthState(state)
+	br.ZLog.Info().Msg("Teams auth OK")
 	if err := br.ensureTeamsConsumersRunning(); err != nil {
-		br.ZLog.Warn().Err(err).Str("auth_path", authPath).Msg("Teams auth present but failed to start consumers")
+		br.ZLog.Warn().Err(err).Msg("Teams auth present but failed to start consumers")
 	}
 }
 

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"errors"
+	"fmt"
 	"time"
 
 	"maunium.net/go/mautrix/bridge/commands"
@@ -43,40 +45,32 @@ var cmdTeamsLogin = &commands.FullHandler{
 }
 
 func fnTeamsLogin(ce *WrappedCommandEvent) {
-	now := time.Now().UTC()
-	if ce.Bridge.hasValidTeamsAuth(now) {
-		if ce.Bridge.areTeamsConsumersRunning() {
-			ce.Reply("Teams auth already active.")
-			return
-		}
-		if err := ce.Bridge.ensureTeamsConsumersRunning(); err != nil {
-			ce.Reply("Teams auth is valid, but failed to start consumers: %v", err)
-			return
-		}
-		ce.Reply("Teams auth OK")
-		return
-	}
-
-	state, authPath, err := ce.Bridge.loadTeamsAuthState()
+	state, err := ce.Bridge.LoadTeamsAuth(time.Now().UTC())
 	if err != nil {
-		ce.Reply("Failed to load Teams auth from `%s`: %v", authPath, err)
-		ce.Reply("Run `teams-login -c %s` and try `$cmdprefix login` again.", ce.Bridge.ConfigPath)
+		ce.Reply("%s", teamsLoginAuthFailureReply(err, ce.Bridge.ConfigPath))
 		return
 	}
-	ce.Bridge.ZLog.Info().
-		Str("auth_path", authPath).
-		Time("skypetoken_expires_at", time.Unix(state.SkypeTokenExpiresAt, 0).UTC()).
-		Msg("Loaded Teams auth state from login command")
-	if err := validateTeamsAuthState(state, now); err != nil {
-		ce.Reply("Teams auth is not usable: %v", err)
-		ce.Reply("Run `teams-login -c %s` and try `$cmdprefix login` again.", ce.Bridge.ConfigPath)
-		return
-	}
-
 	ce.Bridge.setTeamsAuthState(state)
 	if err := ce.Bridge.ensureTeamsConsumersRunning(); err != nil {
 		ce.Reply("Teams auth is valid, but failed to start consumers: %v", err)
 		return
 	}
 	ce.Reply("Teams auth OK")
+}
+
+func teamsLoginAuthFailureReply(err error, configPath string) string {
+	retryMsg := fmt.Sprintf("Run `teams-login -c %s` and try `$cmdprefix login` again.", configPath)
+	switch {
+	case errors.Is(err, ErrTeamsAuthMissingFile), errors.Is(err, ErrTeamsAuthMissingState), errors.Is(err, ErrTeamsAuthMissingToken):
+		return fmt.Sprintf("Teams auth missing. %s", retryMsg)
+	case errors.Is(err, ErrTeamsAuthExpiredToken):
+		if expiresAt, ok := TeamsAuthExpiredAt(err); ok {
+			return fmt.Sprintf("Teams auth expired at %s. %s", expiresAt.Format(time.RFC3339), retryMsg)
+		}
+		return fmt.Sprintf("Teams auth expired. %s", retryMsg)
+	case errors.Is(err, ErrTeamsAuthInvalidJSON):
+		return fmt.Sprintf("Teams auth file is invalid JSON. %s", retryMsg)
+	default:
+		return fmt.Sprintf("Failed to load Teams auth: %v. %s", err, retryMsg)
+	}
 }

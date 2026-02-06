@@ -1,12 +1,15 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"go.mau.fi/mautrix-teams/config"
 	"go.mau.fi/mautrix-teams/internal/teams/auth"
+	"maunium.net/go/mautrix/bridge"
 )
 
 func TestResolveTeamsAuthPathPrecedence(t *testing.T) {
@@ -81,6 +84,10 @@ func TestValidateTeamsAuthState(t *testing.T) {
 	expired := &auth.AuthState{SkypeToken: "token", SkypeTokenExpiresAt: now.Add(-time.Minute).Unix()}
 	if err := validateTeamsAuthState(expired, now); err == nil {
 		t.Fatalf("expected expired token error")
+	} else if !errors.Is(err, ErrTeamsAuthExpiredToken) {
+		t.Fatalf("expected expired sentinel error, got %v", err)
+	} else if _, ok := TeamsAuthExpiredAt(err); !ok {
+		t.Fatalf("expected structured expiry metadata on expired error")
 	}
 
 	valid := &auth.AuthState{SkypeToken: "token", SkypeTokenExpiresAt: now.Add(5 * time.Minute).Unix()}
@@ -110,5 +117,98 @@ func TestLoadTeamsConsumerAuthFromFile(t *testing.T) {
 	}
 	if state == nil || state.SkypeToken != "abc" {
 		t.Fatalf("loaded state mismatch: %+v", state)
+	}
+}
+
+func TestLoadTeamsAuth(t *testing.T) {
+	now := time.Now().UTC()
+	tests := []struct {
+		name       string
+		authJSON   string
+		configPath string
+		wantErr    error
+		checkErr   func(t *testing.T, err error)
+		wantToken  string
+	}{
+		{
+			name:       "missing config path",
+			configPath: "",
+			wantErr:    ErrTeamsAuthMissingCfgPath,
+		},
+		{
+			name:       "missing file",
+			configPath: "config.yaml",
+			wantErr:    ErrTeamsAuthMissingFile,
+		},
+		{
+			name:       "invalid json",
+			configPath: "config.yaml",
+			authJSON:   `{"skype_token":`,
+			wantErr:    ErrTeamsAuthInvalidJSON,
+		},
+		{
+			name:       "expired token",
+			configPath: "config.yaml",
+			authJSON:   `{"skype_token":"abc","skype_token_expires_at":1}`,
+			wantErr:    ErrTeamsAuthExpiredToken,
+			checkErr: func(t *testing.T, err error) {
+				expiresAt, ok := TeamsAuthExpiredAt(err)
+				if !ok {
+					t.Fatalf("expected expiry metadata")
+				}
+				if expiresAt.Unix() != 1 {
+					t.Fatalf("unexpected expiry: %v", expiresAt)
+				}
+			},
+		},
+		{
+			name:       "valid token",
+			configPath: "config.yaml",
+			authJSON:   `{"skype_token":"abc","skype_token_expires_at":32503680000}`,
+			wantToken:  "abc",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("MAUTRIX_TEAMS_AUTH_PATH", "")
+			dir := t.TempDir()
+			var cfgPath string
+			if tt.configPath != "" {
+				cfgPath = filepath.Join(dir, tt.configPath)
+				if err := os.WriteFile(cfgPath, []byte("bridge: {}\n"), 0o600); err != nil {
+					t.Fatalf("write config: %v", err)
+				}
+			}
+			if tt.authJSON != "" {
+				authPath := filepath.Join(dir, "auth.json")
+				if err := os.WriteFile(authPath, []byte(tt.authJSON), 0o600); err != nil {
+					t.Fatalf("write auth: %v", err)
+				}
+			}
+
+			br := &TeamsBridge{
+				Bridge: bridge.Bridge{
+					ConfigPath: cfgPath,
+				},
+				Config: &config.Config{},
+			}
+			state, err := br.LoadTeamsAuth(now)
+			if tt.wantErr != nil {
+				if !errors.Is(err, tt.wantErr) {
+					t.Fatalf("expected error %v, got %v", tt.wantErr, err)
+				}
+				if tt.checkErr != nil {
+					tt.checkErr(t, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if state == nil || state.SkypeToken != tt.wantToken {
+				t.Fatalf("unexpected state: %+v", state)
+			}
+		})
 	}
 }
