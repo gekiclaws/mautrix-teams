@@ -1,33 +1,61 @@
 package main
 
 import (
+	"context"
 	"errors"
+	"strings"
 	"time"
 
+	"github.com/rs/zerolog"
 	"go.mau.fi/mautrix-teams/internal/teams/auth"
 )
 
-func (br *TeamsBridge) ensureTeamsConsumersRunning() error {
+var startTeamsConsumerReactorFn = func(br *TeamsBridge, ctx context.Context, state *auth.AuthState) error {
+	br.startTeamsConsumerMessageSync(ctx, state)
+	return nil
+}
+
+func (br *TeamsBridge) StartTeamsConsumers(ctx context.Context, state *auth.AuthState) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	log := br.teamsLifecycleLogger()
+
 	br.teamsRunLock.Lock()
 	defer br.teamsRunLock.Unlock()
 
 	if br.teamsRunning {
+		log.Info().Msg("Teams consumers already running")
 		return nil
 	}
 
-	state := br.getTeamsAuthState()
 	if err := validateTeamsAuthState(state, time.Now().UTC()); err != nil {
+		log.Warn().Err(err).Msg("Teams consumers skipped: invalid auth state")
 		return err
 	}
 	if err := br.validateTeamsRuntimePrereqs(); err != nil {
+		log.Warn().Err(err).Msg("Teams consumers skipped: runtime prerequisites missing")
 		return err
 	}
 
-	br.startTeamsConsumerRoomSync(state)
-	br.startTeamsConsumerMessageSync(state)
-	br.startTeamsConsumerSender(state)
+	log.Info().Msg("Starting Teams consumer reactor")
+	log.Info().Str("teams_user_id", strings.TrimSpace(state.TeamsUserID)).Msg("Authenticated as Teams user")
+
+	if err := startTeamsConsumerReactorFn(br, ctx, state); err != nil {
+		log.Error().Err(err).Msg("Failed to start Teams consumer reactor")
+		return err
+	}
+
 	br.teamsRunning = true
 	return nil
+}
+
+func (br *TeamsBridge) teamsLifecycleLogger() *zerolog.Logger {
+	if br == nil || br.ZLog == nil {
+		nop := zerolog.Nop()
+		return &nop
+	}
+	return br.ZLog
 }
 
 func (br *TeamsBridge) setTeamsAuthState(state *auth.AuthState) {

@@ -141,7 +141,7 @@ func (br *TeamsBridge) Start() {
 
 	br.setTeamsAuthState(state)
 	br.ZLog.Info().Msg("Teams auth OK")
-	if err := br.ensureTeamsConsumersRunning(); err != nil {
+	if err := br.StartTeamsConsumers(context.Background(), state); err != nil {
 		br.ZLog.Warn().Err(err).Msg("Teams auth present but failed to start consumers")
 	}
 }

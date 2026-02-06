@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -51,7 +52,7 @@ func fnTeamsLogin(ce *WrappedCommandEvent) {
 		return
 	}
 	ce.Bridge.setTeamsAuthState(state)
-	if err := ce.Bridge.ensureTeamsConsumersRunning(); err != nil {
+	if err := ce.Bridge.StartTeamsConsumers(context.Background(), state); err != nil {
 		ce.Reply("Teams auth is valid, but failed to start consumers: %v", err)
 		return
 	}
