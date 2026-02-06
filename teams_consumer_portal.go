@@ -16,7 +16,7 @@ import (
 )
 
 type TeamsConsumerPortal struct {
-	bridge *DiscordBridge
+	bridge *TeamsBridge
 	roomID id.RoomID
 
 	currentlyTyping     []id.UserID

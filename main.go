@@ -52,14 +52,13 @@ var (
 //go:embed example-config.yaml
 var ExampleConfig string
 
-type DiscordBridge struct {
+type TeamsBridge struct {
 	bridge.Bridge
 
 	Config *config.Config
 	DB     *database.Database
 
-	DMA          *DirectMediaAPI
-	provisioning *ProvisioningAPI
+	DMA *DirectMediaAPI
 
 	usersByMXID map[id.UserID]*User
 	usersByID   map[string]*User
@@ -96,11 +95,11 @@ type DiscordBridge struct {
 	TeamsConsumerReceipt *teamsbridge.TeamsConsumerReceiptSender
 }
 
-func (br *DiscordBridge) GetExampleConfig() string {
+func (br *TeamsBridge) GetExampleConfig() string {
 	return ExampleConfig
 }
 
-func (br *DiscordBridge) GetConfigPtr() interface{} {
+func (br *TeamsBridge) GetConfigPtr() interface{} {
 	br.Config = &config.Config{
 		BaseConfig: &br.Bridge.Config,
 	}
@@ -108,7 +107,7 @@ func (br *DiscordBridge) GetConfigPtr() interface{} {
 	return br.Config
 }
 
-func (br *DiscordBridge) Init() {
+func (br *TeamsBridge) Init() {
 	br.CommandProcessor = commands.NewProcessor(&br.Bridge)
 	br.RegisterCommands()
 	br.EventProcessor.On(event.StateTombstone, br.HandleTombstone)
@@ -119,10 +118,7 @@ func (br *DiscordBridge) Init() {
 	discordLog = br.ZLog.With().Str("component", "discordgo").Logger()
 }
 
-func (br *DiscordBridge) Start() {
-	if br.Config.Bridge.Provisioning.SharedSecret != "disable" {
-		br.provisioning = newProvisioningAPI(br)
-	}
+func (br *TeamsBridge) Start() {
 	if br.Config.Bridge.PublicAddress != "" {
 		br.AS.Router.HandleFunc("/mautrix-discord/avatar/{server}/{mediaID}/{checksum}", br.serveMediaProxy).Methods(http.MethodGet)
 	}
@@ -134,18 +130,18 @@ func (br *DiscordBridge) Start() {
 	br.startTeamsConsumerSender()
 }
 
-func (br *DiscordBridge) Stop() {
+func (br *TeamsBridge) Stop() {
 	for _, user := range br.usersByMXID {
-		if user.Session == nil {
+		if user.Client == nil {
 			continue
 		}
 
 		br.Log.Debugln("Disconnecting", user.MXID)
-		user.Session.Close()
+		user.Client.Close()
 	}
 }
 
-func (br *DiscordBridge) GetIPortal(mxid id.RoomID) bridge.Portal {
+func (br *TeamsBridge) GetIPortal(mxid id.RoomID) bridge.Portal {
 	p := br.GetPortalByMXID(mxid)
 	if p == nil {
 		if br.TeamsConsumerSender == nil || br.TeamsThreadStore == nil {
@@ -159,7 +155,7 @@ func (br *DiscordBridge) GetIPortal(mxid id.RoomID) bridge.Portal {
 	return p
 }
 
-func (br *DiscordBridge) GetIUser(mxid id.UserID, create bool) bridge.User {
+func (br *TeamsBridge) GetIUser(mxid id.UserID, create bool) bridge.User {
 	p := br.GetUserByMXID(mxid)
 	if p == nil {
 		return nil
@@ -167,12 +163,12 @@ func (br *DiscordBridge) GetIUser(mxid id.UserID, create bool) bridge.User {
 	return p
 }
 
-func (br *DiscordBridge) IsGhost(mxid id.UserID) bool {
+func (br *TeamsBridge) IsGhost(mxid id.UserID) bool {
 	_, isGhost := br.ParsePuppetMXID(mxid)
 	return isGhost
 }
 
-func (br *DiscordBridge) GetIGhost(mxid id.UserID) bridge.Ghost {
+func (br *TeamsBridge) GetIGhost(mxid id.UserID) bridge.Ghost {
 	p := br.GetPuppetByMXID(mxid)
 	if p == nil {
 		return nil
@@ -180,26 +176,26 @@ func (br *DiscordBridge) GetIGhost(mxid id.UserID) bridge.Ghost {
 	return p
 }
 
-func (br *DiscordBridge) CreatePrivatePortal(id id.RoomID, user bridge.User, ghost bridge.Ghost) {
+func (br *TeamsBridge) CreatePrivatePortal(id id.RoomID, user bridge.User, ghost bridge.Ghost) {
 	//TODO implement
 }
 
 func main() {
-	if handled, exitCode := runDevReadReceiptIfRequested(os.Args[1:]); handled {
-		os.Exit(exitCode)
-	}
-	if handled, exitCode := runDevTypingIfRequested(os.Args[1:]); handled {
-		os.Exit(exitCode)
-	}
-	if handled, exitCode := runDevSendIfRequested(os.Args[1:]); handled {
-		os.Exit(exitCode)
-	}
-	if handled, exitCode := runDevReactIfRequested(os.Args[1:]); handled {
-		os.Exit(exitCode)
-	}
-	runTeamsAuthTestIfRequested(os.Args)
-	runTeamsPollTestIfRequested(os.Args)
-	br := &DiscordBridge{
+	// if handled, exitCode := runDevReadReceiptIfRequested(os.Args[1:]); handled {
+	// 	os.Exit(exitCode)
+	// }
+	// if handled, exitCode := runDevTypingIfRequested(os.Args[1:]); handled {
+	// 	os.Exit(exitCode)
+	// }
+	// if handled, exitCode := runDevSendIfRequested(os.Args[1:]); handled {
+	// 	os.Exit(exitCode)
+	// }
+	// if handled, exitCode := runDevReactIfRequested(os.Args[1:]); handled {
+	// 	os.Exit(exitCode)
+	// }
+	// runTeamsAuthTestIfRequested(os.Args)
+	// runTeamsPollTestIfRequested(os.Args)
+	br := &TeamsBridge{
 		usersByMXID: make(map[id.UserID]*User),
 		usersByID:   make(map[string]*User),
 

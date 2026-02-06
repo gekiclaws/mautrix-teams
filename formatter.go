@@ -109,7 +109,7 @@ func appendIfNotContains(arr []string, newItem string) []string {
 	return append(arr, newItem)
 }
 
-func (br *DiscordBridge) pillConverter(displayname, mxid, eventID string, ctx format.Context) string {
+func (br *TeamsBridge) pillConverter(displayname, mxid, eventID string, ctx format.Context) string {
 	if len(mxid) == 0 {
 		return displayname
 	}

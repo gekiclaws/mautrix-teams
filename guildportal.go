@@ -37,13 +37,13 @@ import (
 type Guild struct {
 	*database.Guild
 
-	bridge *DiscordBridge
+	bridge *TeamsBridge
 	log    log.Logger
 
 	roomCreateLock sync.Mutex
 }
 
-func (br *DiscordBridge) loadGuild(dbGuild *database.Guild, id string, createIfNotExist bool) *Guild {
+func (br *TeamsBridge) loadGuild(dbGuild *database.Guild, id string, createIfNotExist bool) *Guild {
 	if dbGuild == nil {
 		if id == "" || !createIfNotExist {
 			return nil
@@ -64,7 +64,7 @@ func (br *DiscordBridge) loadGuild(dbGuild *database.Guild, id string, createIfN
 	return guild
 }
 
-func (br *DiscordBridge) GetGuildByMXID(mxid id.RoomID) *Guild {
+func (br *TeamsBridge) GetGuildByMXID(mxid id.RoomID) *Guild {
 	br.guildsLock.Lock()
 	defer br.guildsLock.Unlock()
 
@@ -76,7 +76,7 @@ func (br *DiscordBridge) GetGuildByMXID(mxid id.RoomID) *Guild {
 	return portal
 }
 
-func (br *DiscordBridge) GetGuildByID(id string, createIfNotExist bool) *Guild {
+func (br *TeamsBridge) GetGuildByID(id string, createIfNotExist bool) *Guild {
 	br.guildsLock.Lock()
 	defer br.guildsLock.Unlock()
 
@@ -88,11 +88,11 @@ func (br *DiscordBridge) GetGuildByID(id string, createIfNotExist bool) *Guild {
 	return guild
 }
 
-func (br *DiscordBridge) GetAllGuilds() []*Guild {
+func (br *TeamsBridge) GetAllGuilds() []*Guild {
 	return br.dbGuildsToGuilds(br.DB.Guild.GetAll())
 }
 
-func (br *DiscordBridge) dbGuildsToGuilds(dbGuilds []*database.Guild) []*Guild {
+func (br *TeamsBridge) dbGuildsToGuilds(dbGuilds []*database.Guild) []*Guild {
 	br.guildsLock.Lock()
 	defer br.guildsLock.Unlock()
 
@@ -113,7 +113,7 @@ func (br *DiscordBridge) dbGuildsToGuilds(dbGuilds []*database.Guild) []*Guild {
 	return output
 }
 
-func (br *DiscordBridge) NewGuild(dbGuild *database.Guild) *Guild {
+func (br *TeamsBridge) NewGuild(dbGuild *database.Guild) *Guild {
 	guild := &Guild{
 		Guild:  dbGuild,
 		bridge: br,

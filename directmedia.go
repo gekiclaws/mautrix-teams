@@ -50,7 +50,7 @@ import (
 )
 
 type DirectMediaAPI struct {
-	bridge *DiscordBridge
+	bridge *TeamsBridge
 	ks     *federation.KeyServer
 	cfg    config.DirectMedia
 	log    zerolog.Logger
@@ -72,7 +72,7 @@ type AttachmentCacheValue struct {
 	Expiry time.Time
 }
 
-func newDirectMediaAPI(br *DiscordBridge) *DirectMediaAPI {
+func newDirectMediaAPI(br *TeamsBridge) *DirectMediaAPI {
 	if !br.Config.Bridge.DirectMedia.Enabled {
 		return nil
 	}
@@ -337,15 +337,15 @@ func (dma *DirectMediaAPI) fetchNewAttachmentURL(ctx context.Context, meta *Atta
 	}
 	for _, userID := range users {
 		user := dma.bridge.GetCachedUserByMXID(userID)
-		if user == nil || user.Session == nil {
+		if user == nil || user.Client == nil {
 			continue
 		}
-		perms, err := user.Session.State.UserChannelPermissions(user.DiscordID, channelIDStr)
+		perms, err := user.Client.State.UserChannelPermissions(user.DiscordID, channelIDStr)
 		if err == nil && perms&discordgo.PermissionViewChannel == 0 {
 			continue
 		}
 		if client == nil || err == nil {
-			client = user.Session
+			client = user.Client
 			if !client.IsUser {
 				break
 			}

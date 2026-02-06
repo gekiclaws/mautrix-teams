@@ -20,14 +20,14 @@ func (user *User) channelIsBridgeable(channel *discordgo.Channel) bool {
 
 	log := user.log.With().Str("guild_id", channel.GuildID).Str("channel_id", channel.ID).Logger()
 
-	member, err := user.Session.State.Member(channel.GuildID, user.DiscordID)
+	member, err := user.Client.State.Member(channel.GuildID, user.DiscordID)
 	if errors.Is(err, discordgo.ErrStateNotFound) {
 		log.Debug().Msg("Fetching own membership in guild to check roles")
-		member, err = user.Session.GuildMember(channel.GuildID, user.DiscordID)
+		member, err = user.Client.GuildMember(channel.GuildID, user.DiscordID)
 		if err != nil {
 			log.Warn().Err(err).Msg("Failed to get own membership in guild from server")
 		} else {
-			err = user.Session.State.MemberAdd(member)
+			err = user.Client.State.MemberAdd(member)
 			if err != nil {
 				log.Warn().Err(err).Msg("Failed to add own membership in guild to cache")
 			}
@@ -35,11 +35,11 @@ func (user *User) channelIsBridgeable(channel *discordgo.Channel) bool {
 	} else if err != nil {
 		log.Warn().Err(err).Msg("Failed to get own membership in guild from cache")
 	}
-	err = user.Session.State.ChannelAdd(channel)
+	err = user.Client.State.ChannelAdd(channel)
 	if err != nil {
 		log.Warn().Err(err).Msg("Failed to add channel to cache")
 	}
-	perms, err := user.Session.State.UserChannelPermissions(user.DiscordID, channel.ID)
+	perms, err := user.Client.State.UserChannelPermissions(user.DiscordID, channel.ID)
 	if err != nil {
 		log.Warn().Err(err).Msg("Failed to get permissions in channel to determine if it's bridgeable")
 		return true

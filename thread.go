@@ -21,7 +21,7 @@ type Thread struct {
 	initialBackfillAttempted bool
 }
 
-func (br *DiscordBridge) GetThreadByID(id string, root *database.Message) *Thread {
+func (br *TeamsBridge) GetThreadByID(id string, root *database.Message) *Thread {
 	br.threadsLock.Lock()
 	defer br.threadsLock.Unlock()
 	thread, ok := br.threadsByID[id]
@@ -31,7 +31,7 @@ func (br *DiscordBridge) GetThreadByID(id string, root *database.Message) *Threa
 	return thread
 }
 
-func (br *DiscordBridge) GetThreadByRootMXID(mxid id.EventID) *Thread {
+func (br *TeamsBridge) GetThreadByRootMXID(mxid id.EventID) *Thread {
 	br.threadsLock.Lock()
 	defer br.threadsLock.Unlock()
 	thread, ok := br.threadsByRootMXID[mxid]
@@ -41,7 +41,7 @@ func (br *DiscordBridge) GetThreadByRootMXID(mxid id.EventID) *Thread {
 	return thread
 }
 
-func (br *DiscordBridge) GetThreadByRootOrCreationNoticeMXID(mxid id.EventID) *Thread {
+func (br *TeamsBridge) GetThreadByRootOrCreationNoticeMXID(mxid id.EventID) *Thread {
 	br.threadsLock.Lock()
 	defer br.threadsLock.Unlock()
 	thread, ok := br.threadsByRootMXID[mxid]
@@ -54,7 +54,7 @@ func (br *DiscordBridge) GetThreadByRootOrCreationNoticeMXID(mxid id.EventID) *T
 	return thread
 }
 
-func (br *DiscordBridge) loadThread(dbThread *database.Thread, id string, root *database.Message) *Thread {
+func (br *TeamsBridge) loadThread(dbThread *database.Thread, id string, root *database.Message) *Thread {
 	if dbThread == nil {
 		if root == nil {
 			return nil
@@ -78,7 +78,7 @@ func (br *DiscordBridge) loadThread(dbThread *database.Thread, id string, root *
 	return thread
 }
 
-func (br *DiscordBridge) threadFound(ctx context.Context, source *User, rootMessage *database.Message, id string, metadata *discordgo.Channel) {
+func (br *TeamsBridge) threadFound(ctx context.Context, source *User, rootMessage *database.Message, id string, metadata *discordgo.Channel) {
 	thread := br.GetThreadByID(id, rootMessage)
 	log := zerolog.Ctx(ctx)
 	log.Debug().Msg("Marked message as thread root")
@@ -140,10 +140,10 @@ func (thread *Thread) Join(user *User) {
 	}
 
 	var err error
-	if user.Session.IsUser {
-		err = user.Session.ThreadJoin(thread.ID, discordgo.WithLocationParam(discordgo.ThreadJoinLocationContextMenu), thread.RefererOpt())
+	if user.Client.IsUser {
+		err = user.Client.ThreadJoin(thread.ID, discordgo.WithLocationParam(discordgo.ThreadJoinLocationContextMenu), thread.RefererOpt())
 	} else {
-		err = user.Session.ThreadJoin(thread.ID)
+		err = user.Client.ThreadJoin(thread.ID)
 	}
 	if err != nil {
 		log.Error().Err(err).Msg("Error joining thread")

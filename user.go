@@ -41,7 +41,7 @@ type User struct {
 
 	sync.Mutex
 
-	bridge *DiscordBridge
+	bridge *TeamsBridge
 	log    zerolog.Logger
 
 	PermissionLevel bridgeconfig.PermissionLevel
@@ -50,12 +50,10 @@ type User struct {
 	spaceMembershipChecked   bool
 	dmSpaceMembershipChecked bool
 
-	Session *teams.Client
+	Client *teams.Client
 
 	BridgeState     *bridge.BridgeStateQueue
 	bridgeStateLock sync.Mutex
-	wasDisconnected bool
-	wasLoggedOut    bool
 
 	markedOpened     map[string]time.Time
 	markedOpenedLock sync.Mutex
@@ -73,11 +71,11 @@ func (user *User) GetRemoteID() string {
 }
 
 func (user *User) GetRemoteName() string {
-	if user.Session != nil && user.Session.State != nil && user.Session.State.User != nil {
-		if user.Session.State.User.Discriminator == "0" {
-			return fmt.Sprintf("@%s", user.Session.State.User.Username)
+	if user.Client != nil && user.Client.State != nil && user.Client.State.User != nil {
+		if user.Client.State.User.Discriminator == "0" {
+			return fmt.Sprintf("@%s", user.Client.State.User.Username)
 		}
-		return fmt.Sprintf("%s#%s", user.Session.State.User.Username, user.Session.State.User.Discriminator)
+		return fmt.Sprintf("%s#%s", user.Client.State.User.Username, user.Client.State.User.Discriminator)
 	}
 	return user.DiscordID
 }
@@ -142,7 +140,7 @@ func (user *User) GetIGhost() bridge.Ghost {
 
 var _ bridge.User = (*User)(nil)
 
-func (br *DiscordBridge) loadUser(dbUser *database.User, mxid *id.UserID) *User {
+func (br *TeamsBridge) loadUser(dbUser *database.User, mxid *id.UserID) *User {
 	if dbUser == nil {
 		if mxid == nil {
 			return nil
@@ -165,7 +163,7 @@ func (br *DiscordBridge) loadUser(dbUser *database.User, mxid *id.UserID) *User 
 	return user
 }
 
-func (br *DiscordBridge) GetUserByMXID(userID id.UserID) *User {
+func (br *TeamsBridge) GetUserByMXID(userID id.UserID) *User {
 	if userID == br.Bot.UserID || br.IsGhost(userID) {
 		return nil
 	}
@@ -179,7 +177,7 @@ func (br *DiscordBridge) GetUserByMXID(userID id.UserID) *User {
 	return user
 }
 
-func (br *DiscordBridge) GetUserByID(id string) *User {
+func (br *TeamsBridge) GetUserByID(id string) *User {
 	br.usersLock.Lock()
 	defer br.usersLock.Unlock()
 
@@ -190,19 +188,19 @@ func (br *DiscordBridge) GetUserByID(id string) *User {
 	return user
 }
 
-func (br *DiscordBridge) GetCachedUserByID(id string) *User {
+func (br *TeamsBridge) GetCachedUserByID(id string) *User {
 	br.usersLock.Lock()
 	defer br.usersLock.Unlock()
 	return br.usersByID[id]
 }
 
-func (br *DiscordBridge) GetCachedUserByMXID(userID id.UserID) *User {
+func (br *TeamsBridge) GetCachedUserByMXID(userID id.UserID) *User {
 	br.usersLock.Lock()
 	defer br.usersLock.Unlock()
 	return br.usersByMXID[userID]
 }
 
-func (br *DiscordBridge) NewUser(dbUser *database.User) *User {
+func (br *TeamsBridge) NewUser(dbUser *database.User) *User {
 	user := &User{
 		User:   dbUser,
 		bridge: br,
@@ -220,7 +218,7 @@ func (br *DiscordBridge) NewUser(dbUser *database.User) *User {
 	return user
 }
 
-func (br *DiscordBridge) getAllUsersWithToken() []*User {
+func (br *TeamsBridge) getAllUsersWithToken() []*User {
 	br.usersLock.Lock()
 	defer br.usersLock.Unlock()
 
@@ -237,7 +235,7 @@ func (br *DiscordBridge) getAllUsersWithToken() []*User {
 	return users
 }
 
-func (br *DiscordBridge) startUsers() {
+func (br *TeamsBridge) startUsers() {
 	br.ZLog.Debug().Msg("Starting users")
 
 	usersWithToken := br.getAllUsersWithToken()
@@ -377,7 +375,7 @@ func (user *User) GetDMSpaceRoom() id.RoomID {
 }
 
 func (user *User) ViewingChannel(portal *Portal) bool {
-	if portal.GuildID != "" || !user.Session.IsUser {
+	if portal.GuildID != "" || !user.Client.IsUser {
 		return false
 	}
 	user.markedOpenedLock.Lock()
@@ -386,7 +384,7 @@ func (user *User) ViewingChannel(portal *Portal) bool {
 	// TODO is there an expiry time?
 	if ts.IsZero() {
 		user.markedOpened[portal.Key.ChannelID] = time.Now()
-		err := user.Session.MarkViewing(portal.Key.ChannelID)
+		err := user.Client.MarkViewing(portal.Key.ChannelID)
 		if err != nil {
 			user.log.Error().Err(err).
 				Str("channel_id", portal.Key.ChannelID).
@@ -436,9 +434,6 @@ func (user *User) NextDiscordUploadID() string {
 }
 
 func (user *User) Login(token string) error {
-	user.bridgeStateLock.Lock()
-	user.wasLoggedOut = false
-	user.bridgeStateLock.Unlock()
 	user.DiscordToken = token
 	var err error
 	const maxRetries = 3
@@ -488,13 +483,13 @@ func (user *User) Logout(isOverwriting bool) {
 		}
 	}
 
-	if user.Session != nil {
-		if err := user.Session.Close(); err != nil {
+	if user.Client != nil {
+		if err := user.Client.Close(); err != nil {
 			user.log.Warn().Err(err).Msg("Error closing session")
 		}
 	}
 
-	user.Session = nil
+	user.Client = nil
 	user.DiscordToken = ""
 	user.ReadStateVersion = 0
 	if !isOverwriting {
@@ -507,13 +502,6 @@ func (user *User) Logout(isOverwriting bool) {
 	user.DiscordID = ""
 	user.Update()
 	user.log.Info().Msg("User logged out")
-}
-
-func (user *User) Connected() bool {
-	user.Lock()
-	defer user.Unlock()
-
-	return user.Session != nil
 }
 
 const BotIntents = discordgo.IntentGuilds |
@@ -557,7 +545,7 @@ func (user *User) Connect() error {
 
 	session.EventHandler = user.eventHandlerSync
 
-	user.Session = session
+	user.Client = session
 
 	return nil
 }
@@ -645,15 +633,15 @@ func (user *User) eventHandler(rawEvt any) {
 func (user *User) Disconnect() error {
 	user.Lock()
 	defer user.Unlock()
-	if user.Session == nil {
+	if user.Client == nil {
 		return ErrNotConnected
 	}
 
 	user.log.Info().Msg("Disconnecting session manually")
-	if err := user.Session.Close(); err != nil {
+	if err := user.Client.Close(); err != nil {
 		return err
 	}
-	user.Session = nil
+	user.Client = nil
 	return nil
 }
 
@@ -687,9 +675,6 @@ func (s ChannelSlice) Swap(i, j int) {
 
 func (user *User) readyHandler(r *discordgo.Ready) {
 	user.log.Debug().Msg("Discord connection ready")
-	user.bridgeStateLock.Lock()
-	user.wasLoggedOut = false
-	user.bridgeStateLock.Unlock()
 
 	if user.DiscordID != r.User.ID {
 		user.bridge.usersLock.Lock()
@@ -746,10 +731,10 @@ func (user *User) readyHandler(r *discordgo.Ready) {
 }
 
 func (user *User) subscribeGuilds(delay time.Duration) {
-	if !user.Session.IsUser {
+	if !user.Client.IsUser {
 		return
 	}
-	for _, guildMeta := range user.Session.State.Guilds {
+	for _, guildMeta := range user.Client.State.Guilds {
 		guild := user.bridge.GetGuildByID(guildMeta.ID, false)
 		if guild != nil && guild.MXID != "" {
 			user.log.Debug().Str("guild_id", guild.ID).Msg("Subscribing to guild")
@@ -759,7 +744,7 @@ func (user *User) subscribeGuilds(delay time.Duration) {
 				Activities: true,
 				Threads:    true,
 			}
-			err := user.Session.SubscribeGuild(dat)
+			err := user.Client.SubscribeGuild(dat)
 			if err != nil {
 				user.log.Warn().Err(err).Str("guild_id", guild.ID).Msg("Failed to subscribe to guild")
 			}
@@ -967,31 +952,16 @@ func (user *User) handleGuild(meta *discordgo.Guild, timestamp time.Time, isInSp
 }
 
 func (user *User) connectedHandler(_ *discordgo.Connect) {
-	user.bridgeStateLock.Lock()
-	defer user.bridgeStateLock.Unlock()
 	user.log.Debug().Msg("Connected to Discord")
-	if user.wasDisconnected {
-		user.wasDisconnected = false
-	}
 }
 
 func (user *User) disconnectedHandler(_ *discordgo.Disconnect) {
-	user.bridgeStateLock.Lock()
-	defer user.bridgeStateLock.Unlock()
-	if user.wasLoggedOut {
-		user.log.Debug().Msg("Disconnected from Discord (not updating bridge state as user was just logged out)")
-		return
-	}
 	user.log.Debug().Msg("Disconnected from Discord")
-	user.wasDisconnected = true
 	user.BridgeState.Send(status.BridgeState{StateEvent: status.StateTransientDisconnect, Error: "dc-transient-disconnect", Message: "Temporarily disconnected from Discord, trying to reconnect"})
 }
 
 func (user *User) invalidAuthHandler(_ *discordgo.InvalidAuth) {
-	user.bridgeStateLock.Lock()
-	defer user.bridgeStateLock.Unlock()
 	user.log.Info().Msg("Got logged out from Discord due to invalid token")
-	user.wasLoggedOut = true
 	user.BridgeState.Send(status.BridgeState{StateEvent: status.StateBadCredentials, Error: "dc-websocket-disconnect-4004", Message: "Discord access token is no longer valid, please log in again"})
 	go user.Logout(false)
 }
@@ -1146,17 +1116,17 @@ func (user *User) findPortal(channelID string) (*Portal, *Thread) {
 	if thread != nil && thread.Parent != nil {
 		return thread.Parent, thread
 	}
-	if !user.Session.IsUser {
-		channel, _ := user.Session.State.Channel(channelID)
+	if !user.Client.IsUser {
+		channel, _ := user.Client.State.Channel(channelID)
 		if channel == nil {
 			user.log.Debug().Str("channel_id", channelID).Msg("Fetching info of unknown channel to handle message")
 			var err error
-			channel, err = user.Session.Channel(channelID)
+			channel, err = user.Client.Channel(channelID)
 			if err != nil {
 				user.log.Warn().Err(err).Str("channel_id", channelID).Msg("Failed to get info of unknown channel")
 			} else {
 				user.log.Debug().Str("channel_id", channelID).Msg("Got info for channel to handle message")
-				_ = user.Session.State.ChannelAdd(channel)
+				_ = user.Client.State.ChannelAdd(channel)
 			}
 		}
 		if channel != nil && user.channelIsBridgeable(channel) {
@@ -1425,7 +1395,7 @@ func (user *User) bridgeGuild(guildID string, everything bool) error {
 	if guild == nil {
 		return errors.New("guild not found")
 	}
-	meta, _ := user.Session.State.Guild(guildID)
+	meta, _ := user.Client.State.Guild(guildID)
 	err := guild.CreateMatrixRoom(user, meta)
 	if err != nil {
 		return err
@@ -1449,9 +1419,9 @@ func (user *User) bridgeGuild(guildID string, everything bool) error {
 	}
 	guild.Update()
 
-	if user.Session.IsUser {
+	if user.Client.IsUser {
 		log.Debug().Msg("Subscribing to guild after bridging")
-		err = user.Session.SubscribeGuild(discordgo.GuildSubscribeData{
+		err = user.Client.SubscribeGuild(discordgo.GuildSubscribeData{
 			GuildID:    guild.ID,
 			Typing:     true,
 			Activities: true,

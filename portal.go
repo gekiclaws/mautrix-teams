@@ -60,7 +60,7 @@ type Portal struct {
 	Parent *Portal
 	Guild  *Guild
 
-	bridge *DiscordBridge
+	bridge *TeamsBridge
 	log    zerolog.Logger
 
 	roomCreateLock sync.Mutex
@@ -109,7 +109,7 @@ var (
 	portalCreationDummyEvent = event.Type{Type: "fi.mau.dummy.portal_created", Class: event.MessageEventType}
 )
 
-func (br *DiscordBridge) loadPortal(dbPortal *database.Portal, key *database.PortalKey, chanType discordgo.ChannelType) *Portal {
+func (br *TeamsBridge) loadPortal(dbPortal *database.Portal, key *database.PortalKey, chanType discordgo.ChannelType) *Portal {
 	if dbPortal == nil {
 		if key == nil || chanType < 0 {
 			return nil
@@ -143,7 +143,7 @@ func (br *DiscordBridge) loadPortal(dbPortal *database.Portal, key *database.Por
 	return portal
 }
 
-func (br *DiscordBridge) GetPortalByMXID(mxid id.RoomID) *Portal {
+func (br *TeamsBridge) GetPortalByMXID(mxid id.RoomID) *Portal {
 	br.portalsLock.Lock()
 	defer br.portalsLock.Unlock()
 
@@ -181,7 +181,7 @@ func (user *User) FindPrivateChatWith(userID string) *Portal {
 	return user.bridge.loadPortal(dbPortal, nil, discordgo.ChannelTypeDM)
 }
 
-func (br *DiscordBridge) GetExistingPortalByID(key database.PortalKey) *Portal {
+func (br *TeamsBridge) GetExistingPortalByID(key database.PortalKey) *Portal {
 	br.portalsLock.Lock()
 	defer br.portalsLock.Unlock()
 	portal, ok := br.portalsByID[key]
@@ -197,7 +197,7 @@ func (br *DiscordBridge) GetExistingPortalByID(key database.PortalKey) *Portal {
 	return portal
 }
 
-func (br *DiscordBridge) GetPortalByID(key database.PortalKey, chanType discordgo.ChannelType) *Portal {
+func (br *TeamsBridge) GetPortalByID(key database.PortalKey, chanType discordgo.ChannelType) *Portal {
 	br.portalsLock.Lock()
 	defer br.portalsLock.Unlock()
 	if chanType != discordgo.ChannelTypeDM {
@@ -212,15 +212,15 @@ func (br *DiscordBridge) GetPortalByID(key database.PortalKey, chanType discordg
 	return portal
 }
 
-func (br *DiscordBridge) GetAllPortals() []*Portal {
+func (br *TeamsBridge) GetAllPortals() []*Portal {
 	return br.dbPortalsToPortals(br.DB.Portal.GetAll())
 }
 
-func (br *DiscordBridge) GetAllPortalsInGuild(guildID string) []*Portal {
+func (br *TeamsBridge) GetAllPortalsInGuild(guildID string) []*Portal {
 	return br.dbPortalsToPortals(br.DB.Portal.GetAllInGuild(guildID))
 }
 
-func (br *DiscordBridge) GetAllIPortals() (iportals []bridge.Portal) {
+func (br *TeamsBridge) GetAllIPortals() (iportals []bridge.Portal) {
 	portals := br.GetAllPortals()
 	iportals = make([]bridge.Portal, len(portals))
 	for i, portal := range portals {
@@ -229,11 +229,11 @@ func (br *DiscordBridge) GetAllIPortals() (iportals []bridge.Portal) {
 	return iportals
 }
 
-func (br *DiscordBridge) GetDMPortalsWith(otherUserID string) []*Portal {
+func (br *TeamsBridge) GetDMPortalsWith(otherUserID string) []*Portal {
 	return br.dbPortalsToPortals(br.DB.Portal.FindPrivateChatsWith(otherUserID))
 }
 
-func (br *DiscordBridge) dbPortalsToPortals(dbPortals []*database.Portal) []*Portal {
+func (br *TeamsBridge) dbPortalsToPortals(dbPortals []*database.Portal) []*Portal {
 	br.portalsLock.Lock()
 	defer br.portalsLock.Unlock()
 
@@ -254,7 +254,7 @@ func (br *DiscordBridge) dbPortalsToPortals(dbPortals []*database.Portal) []*Por
 	return output
 }
 
-func (br *DiscordBridge) NewPortal(dbPortal *database.Portal) *Portal {
+func (br *TeamsBridge) NewPortal(dbPortal *database.Portal) *Portal {
 	portal := &Portal{
 		Portal: dbPortal,
 		bridge: br,
@@ -1173,12 +1173,12 @@ func (portal *Portal) startThreadFromMatrix(sender *User, threadRoot id.EventID)
 		return "", fmt.Errorf("root event is already in a thread")
 	} else {
 		var ch *discordgo.Channel
-		ch, err = sender.Session.MessageThreadStartComplex(portal.Key.ChannelID, existingMsg.DiscordID, &discordgo.ThreadStart{
+		ch, err = sender.Client.MessageThreadStartComplex(portal.Key.ChannelID, existingMsg.DiscordID, &discordgo.ThreadStart{
 			Name:                threadName,
 			AutoArchiveDuration: 24 * 60,
 			Type:                discordgo.ChannelTypeGuildPublicThread,
 			Location:            "Message",
-		}, portal.RefererOptIfUser(sender.Session, "")...)
+		}, portal.RefererOptIfUser(sender.Client, "")...)
 		if err != nil {
 			return "", fmt.Errorf("error starting thread: %v", err)
 		}
@@ -1386,7 +1386,7 @@ func (portal *Portal) sendMessageMetrics(evt *event.Event, err error, part strin
 	}
 }
 
-func (br *DiscordBridge) serveMediaProxy(w http.ResponseWriter, r *http.Request) {
+func (br *TeamsBridge) serveMediaProxy(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	mxc := id.ContentURI{
 		Homeserver: vars["server"],
@@ -1429,14 +1429,14 @@ func (br *DiscordBridge) serveMediaProxy(w http.ResponseWriter, r *http.Request)
 	}
 }
 
-func (br *DiscordBridge) hashMediaProxyURL(mxc id.ContentURI) (string, []byte) {
+func (br *TeamsBridge) hashMediaProxyURL(mxc id.ContentURI) (string, []byte) {
 	path := fmt.Sprintf("/mautrix-discord/avatar/%s/%s/", mxc.Homeserver, mxc.FileID)
 	checksum := hmac.New(sha256.New, []byte(br.Config.Bridge.AvatarProxyKey))
 	checksum.Write([]byte(path))
 	return path, checksum.Sum(nil)
 }
 
-func (br *DiscordBridge) makeMediaProxyURL(mxc id.ContentURI) string {
+func (br *TeamsBridge) makeMediaProxyURL(mxc id.ContentURI) string {
 	if br.Config.Bridge.PublicAddress == "" {
 		return ""
 	}
@@ -1541,7 +1541,7 @@ func (portal *Portal) handleMatrixMessage(sender *User, evt *event.Event) {
 	}
 
 	channelID := portal.Key.ChannelID
-	sess := sender.Session
+	sess := sender.Client
 	if sess == nil && portal.RelayWebhookID == "" {
 		go portal.sendMessageMetrics(evt, errUserNotLoggedIn, "Ignoring")
 		return
@@ -1659,7 +1659,7 @@ func (portal *Portal) handleMatrixMessage(sender *User, evt *event.Event) {
 				Description: description,
 			}
 			sendReq.Attachments = []*discordgo.MessageAttachment{att}
-			prep, err := sender.Session.ChannelAttachmentCreate(channelID, &discordgo.ReqPrepareAttachments{
+			prep, err := sender.Client.ChannelAttachmentCreate(channelID, &discordgo.ReqPrepareAttachments{
 				Files: []*discordgo.FilePrepare{{
 					Size: len(data),
 					Name: att.Filename,
@@ -1672,7 +1672,7 @@ func (portal *Portal) handleMatrixMessage(sender *User, evt *event.Event) {
 			}
 			prepared := prep.Attachments[0]
 			att.UploadedFilename = prepared.UploadFilename
-			err = uploadDiscordAttachment(sender.Session.Client, prepared.UploadURL, data)
+			err = uploadDiscordAttachment(sender.Client.Client, prepared.UploadURL, data)
 			if err != nil {
 				go portal.sendMessageMetrics(evt, err, "Error reuploading media in")
 				return
@@ -1875,7 +1875,7 @@ func (portal *Portal) cleanup(puppetsOnly bool) {
 	portal.bridge.cleanupRoom(intent, portal.MXID, puppetsOnly, portal.log)
 }
 
-func (br *DiscordBridge) cleanupRoom(intent *appservice.IntentAPI, mxid id.RoomID, puppetsOnly bool, log zerolog.Logger) {
+func (br *TeamsBridge) cleanupRoom(intent *appservice.IntentAPI, mxid id.RoomID, puppetsOnly bool, log zerolog.Logger) {
 	members, err := intent.JoinedMembers(mxid)
 	if err != nil {
 		log.Err(err).Msg("Failed to get portal members for cleanup")
@@ -1989,7 +1989,7 @@ func (portal *Portal) handleMatrixReaction(sender *User, evt *event.Event) {
 		return
 	}
 
-	err := sender.Session.MessageReactionAddUser(portal.GuildID, msg.DiscordProtoChannelID(), msg.DiscordID, emojiID)
+	err := sender.Client.MessageReactionAddUser(portal.GuildID, msg.DiscordProtoChannelID(), msg.DiscordID, emojiID)
 	go portal.sendMessageMetrics(evt, err, "Error sending")
 	if err == nil {
 		dbReaction := portal.bridge.DB.Reaction.New()
@@ -2120,7 +2120,7 @@ func (portal *Portal) handleMatrixRedaction(sender *User, evt *event.Event) {
 		}
 	}
 
-	sess := sender.Session
+	sess := sender.Client
 	if sess == nil && portal.RelayWebhookID == "" {
 		go portal.sendMessageMetrics(evt, errUserNotLoggedIn, "Ignoring")
 		return
@@ -2160,7 +2160,7 @@ func (portal *Portal) handleMatrixRedaction(sender *User, evt *event.Event) {
 
 func (portal *Portal) HandleMatrixReadReceipt(brUser bridge.User, eventID id.EventID, receipt event.ReadReceipt) {
 	sender := brUser.(*User)
-	if sender.Session == nil {
+	if sender.Client == nil {
 		return
 	}
 	var thread *Thread
@@ -2186,7 +2186,7 @@ func (portal *Portal) HandleMatrixReadReceipt(brUser bridge.User, eventID id.Eve
 			return
 		}
 	}
-	if !sender.Session.IsUser {
+	if !sender.Client.IsUser {
 		// Drop read receipts from bot users (after checking for the thread auto-join stuff)
 		return
 	}
@@ -2215,7 +2215,7 @@ func (portal *Portal) HandleMatrixReadReceipt(brUser bridge.User, eventID id.Eve
 			Msg("Dropping read receipt: thread ID mismatch")
 		return
 	}
-	resp, err := sender.Session.ChannelMessageAckNoToken(msg.DiscordProtoChannelID(), msg.DiscordID, portal.RefererOpt(msg.DiscordProtoChannelID()))
+	resp, err := sender.Client.ChannelMessageAckNoToken(msg.DiscordProtoChannelID(), msg.DiscordID, portal.RefererOpt(msg.DiscordProtoChannelID()))
 	if err != nil {
 		log.Err(err).Msg("Failed to send read receipt to Discord")
 	} else if resp.Token != nil {
@@ -2247,9 +2247,9 @@ func (portal *Portal) HandleMatrixTyping(newTyping []id.UserID) {
 	portal.currentlyTyping = newTyping
 	for _, userID := range startedTyping {
 		user := portal.bridge.GetUserByMXID(userID)
-		if user != nil && user.Session != nil {
+		if user != nil && user.Client != nil {
 			user.ViewingChannel(portal)
-			err := user.Session.ChannelTyping(portal.Key.ChannelID, portal.RefererOptIfUser(user.Session, "")...)
+			err := user.Client.ChannelTyping(portal.Key.ChannelID, portal.RefererOptIfUser(user.Client, "")...)
 			if err != nil {
 				portal.log.Warn().Err(err).
 					Str("user_id", user.MXID.String()).
@@ -2492,11 +2492,11 @@ func (portal *Portal) UpdateInfo(source *User, meta *discordgo.Channel) *discord
 
 	if meta == nil {
 		log.Debug().Msg("UpdateInfo called without metadata, fetching from user's state cache")
-		meta, _ = source.Session.State.Channel(portal.Key.ChannelID)
+		meta, _ = source.Client.State.Channel(portal.Key.ChannelID)
 		if meta == nil {
 			log.Warn().Msg("No metadata found in state cache, fetching from server via user")
 			var err error
-			meta, err = source.Session.Channel(portal.Key.ChannelID)
+			meta, err = source.Client.Channel(portal.Key.ChannelID)
 			if err != nil {
 				log.Err(err).Msg("Failed to fetch meta via user")
 				return nil
@@ -2515,7 +2515,7 @@ func (portal *Portal) UpdateInfo(source *User, meta *discordgo.Channel) *discord
 	if portal.OtherUserID == "" && portal.IsPrivateChat() {
 		if len(meta.Recipients) == 0 {
 			var err error
-			meta, err = source.Session.Channel(meta.ID)
+			meta, err = source.Client.Channel(meta.ID)
 			if err != nil {
 				log.Err(err).Msg("Failed to fetch DM channel info to find other user ID")
 			}
@@ -2573,7 +2573,7 @@ func (portal *Portal) UpdateInfo(source *User, meta *discordgo.Channel) *discord
 	return meta
 }
 
-func (br *DiscordBridge) HandleTombstone(evt *event.Event) {
+func (br *TeamsBridge) HandleTombstone(evt *event.Event) {
 	if evt.StateKey == nil || *evt.StateKey != "" {
 		return
 	}

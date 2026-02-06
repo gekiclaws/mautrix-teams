@@ -20,7 +20,7 @@ import (
 type Puppet struct {
 	*database.Puppet
 
-	bridge *DiscordBridge
+	bridge *TeamsBridge
 	log    zerolog.Logger
 
 	MXID id.UserID
@@ -40,7 +40,7 @@ func (puppet *Puppet) GetMXID() id.UserID {
 
 var userIDRegex *regexp.Regexp
 
-func (br *DiscordBridge) NewPuppet(dbPuppet *database.Puppet) *Puppet {
+func (br *TeamsBridge) NewPuppet(dbPuppet *database.Puppet) *Puppet {
 	return &Puppet{
 		Puppet: dbPuppet,
 		bridge: br,
@@ -50,7 +50,7 @@ func (br *DiscordBridge) NewPuppet(dbPuppet *database.Puppet) *Puppet {
 	}
 }
 
-func (br *DiscordBridge) ParsePuppetMXID(mxid id.UserID) (string, bool) {
+func (br *TeamsBridge) ParsePuppetMXID(mxid id.UserID) (string, bool) {
 	if userIDRegex == nil {
 		pattern := fmt.Sprintf(
 			"^@%s:%s$",
@@ -69,7 +69,7 @@ func (br *DiscordBridge) ParsePuppetMXID(mxid id.UserID) (string, bool) {
 	return "", false
 }
 
-func (br *DiscordBridge) GetPuppetByMXID(mxid id.UserID) *Puppet {
+func (br *TeamsBridge) GetPuppetByMXID(mxid id.UserID) *Puppet {
 	discordID, ok := br.ParsePuppetMXID(mxid)
 	if !ok {
 		return nil
@@ -78,7 +78,7 @@ func (br *DiscordBridge) GetPuppetByMXID(mxid id.UserID) *Puppet {
 	return br.GetPuppetByID(discordID)
 }
 
-func (br *DiscordBridge) GetPuppetByID(id string) *Puppet {
+func (br *TeamsBridge) GetPuppetByID(id string) *Puppet {
 	br.puppetsLock.Lock()
 	defer br.puppetsLock.Unlock()
 
@@ -98,7 +98,7 @@ func (br *DiscordBridge) GetPuppetByID(id string) *Puppet {
 	return puppet
 }
 
-func (br *DiscordBridge) GetPuppetByCustomMXID(mxid id.UserID) *Puppet {
+func (br *TeamsBridge) GetPuppetByCustomMXID(mxid id.UserID) *Puppet {
 	br.puppetsLock.Lock()
 	defer br.puppetsLock.Unlock()
 
@@ -117,15 +117,15 @@ func (br *DiscordBridge) GetPuppetByCustomMXID(mxid id.UserID) *Puppet {
 	return puppet
 }
 
-func (br *DiscordBridge) GetAllPuppetsWithCustomMXID() []*Puppet {
+func (br *TeamsBridge) GetAllPuppetsWithCustomMXID() []*Puppet {
 	return br.dbPuppetsToPuppets(br.DB.Puppet.GetAllWithCustomMXID())
 }
 
-func (br *DiscordBridge) GetAllPuppets() []*Puppet {
+func (br *TeamsBridge) GetAllPuppets() []*Puppet {
 	return br.dbPuppetsToPuppets(br.DB.Puppet.GetAll())
 }
 
-func (br *DiscordBridge) dbPuppetsToPuppets(dbPuppets []*database.Puppet) []*Puppet {
+func (br *TeamsBridge) dbPuppetsToPuppets(dbPuppets []*database.Puppet) []*Puppet {
 	br.puppetsLock.Lock()
 	defer br.puppetsLock.Unlock()
 
@@ -151,7 +151,7 @@ func (br *DiscordBridge) dbPuppetsToPuppets(dbPuppets []*database.Puppet) []*Pup
 	return output
 }
 
-func (br *DiscordBridge) FormatPuppetMXID(did string) id.UserID {
+func (br *TeamsBridge) FormatPuppetMXID(did string) id.UserID {
 	return id.NewUserID(
 		br.Config.Bridge.FormatUsername(did),
 		br.Config.Homeserver.Domain,
@@ -216,7 +216,7 @@ func (puppet *Puppet) UpdateName(info *discordgo.User) bool {
 	return true
 }
 
-func (br *DiscordBridge) reuploadUserAvatar(intent *appservice.IntentAPI, guildID, userID, avatarID string) (id.ContentURI, string, error) {
+func (br *TeamsBridge) reuploadUserAvatar(intent *appservice.IntentAPI, guildID, userID, avatarID string) (id.ContentURI, string, error) {
 	var downloadURL string
 	if guildID == "" {
 		if strings.HasPrefix(avatarID, "a_") {
@@ -291,7 +291,7 @@ func (puppet *Puppet) UpdateInfo(source *User, info *discordgo.User, message *di
 		}
 		var err error
 		puppet.log.Debug().Str("source_user", source.DiscordID).Msg("Fetching info through user to update puppet")
-		info, err = source.Session.User(puppet.ID)
+		info, err = source.Client.User(puppet.ID)
 		if err != nil {
 			puppet.log.Error().Err(err).Str("source_user", source.DiscordID).Msg("Failed to fetch info through user")
 			return
