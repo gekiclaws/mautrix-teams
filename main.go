@@ -20,6 +20,7 @@ import (
 	"context"
 	_ "embed"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"strings"
@@ -30,8 +31,10 @@ import (
 	"go.mau.fi/util/configupgrade"
 	"go.mau.fi/util/exsync"
 	"golang.org/x/sync/semaphore"
+	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/appservice"
 	"maunium.net/go/mautrix/bridge"
+	"maunium.net/go/mautrix/bridge/bridgeconfig"
 	"maunium.net/go/mautrix/bridge/commands"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
@@ -117,11 +120,36 @@ func (br *TeamsBridge) GetConfigPtr() interface{} {
 }
 
 func (br *TeamsBridge) Init() {
+	br.ZLog.Info().
+		Str("context", "implicit-dm-registration").
+		Msg("IMPLICIT DM REGISTRATION CODE PATH EXECUTED")
 	br.CommandProcessor = commands.NewProcessor(&br.Bridge)
 	br.ZLog.Info().Msg("commands: RegisterCommands() starting")
 	br.RegisterCommands()
 	br.ZLog.Info().Msg("commands: RegisterCommands() done")
 	br.EventProcessor.On(event.StateTombstone, br.HandleTombstone)
+	br.EventProcessor.On(event.StateMember, br.handleBotInviteManagementRoomClaim)
+	for _, subtype := range []event.Type{
+		event.EventMessage,
+		event.EventEncrypted,
+		event.EventSticker,
+		event.EventReaction,
+		event.EventRedaction,
+		event.StateMember,
+		event.StateRoomName,
+		event.StateRoomAvatar,
+		event.StateTopic,
+		event.StateEncryption,
+		event.EphemeralEventReceipt,
+		event.EphemeralEventTyping,
+		event.StateTombstone,
+	} {
+		br.EventProcessor.PrependHandler(subtype, br.handleImplicitDMManagementRoomClaim)
+		br.ZLog.Info().
+			Str("processor_ptr", fmt.Sprintf("%p", br.EventProcessor)).
+			Str("event_type", subtype.String()).
+			Msg("REGISTER implicit-dm pre-handler")
+	}
 
 	matrixHTMLParser.PillConverter = br.pillConverter
 
@@ -130,6 +158,12 @@ func (br *TeamsBridge) Init() {
 }
 
 func (br *TeamsBridge) Start() {
+	fmt.Println("PROBE: registering implicit DM pre-handler (Start)")
+	br.EventProcessor.PrependHandler(
+		event.EventMessage,
+		br.handleImplicitDMManagementRoomClaim,
+	)
+
 	if br.Config.Bridge.PublicAddress != "" {
 		br.AS.Router.HandleFunc("/mautrix-discord/avatar/{server}/{mediaID}/{checksum}", br.serveMediaProxy).Methods(http.MethodGet)
 	}
@@ -203,21 +237,86 @@ func (br *TeamsBridge) GetIGhost(mxid id.UserID) bridge.Ghost {
 	return p
 }
 
-func (br *TeamsBridge) claimManagementRoomOnInvite(bot *appservice.IntentAPI, roomID id.RoomID, user *User) {
+func (br *TeamsBridge) isAlreadyJoinedJoinError(err error) bool {
+	if err == nil {
+		return false
+	}
+	checkHTTPError := func(httpErr mautrix.HTTPError) bool {
+		if httpErr.RespError == nil {
+			return false
+		}
+		errMsg := strings.ToLower(httpErr.RespError.Err)
+		return strings.Contains(errMsg, "already in the room") ||
+			strings.Contains(errMsg, "already joined to room") ||
+			strings.Contains(errMsg, "already joined to this room")
+	}
+	switch typedErr := err.(type) {
+	case mautrix.HTTPError:
+		if checkHTTPError(typedErr) {
+			return true
+		}
+	case *mautrix.HTTPError:
+		if typedErr != nil && checkHTTPError(*typedErr) {
+			return true
+		}
+	}
+	var httpErr mautrix.HTTPError
+	if errors.As(err, &httpErr) && checkHTTPError(httpErr) {
+		return true
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "already joined")
+}
+
+func (br *TeamsBridge) isGhostForManagementRoomClaim(userID id.UserID) (isGhost bool) {
+	if br == nil || userID == "" {
+		return false
+	}
+	defer func() {
+		if recover() != nil {
+			isGhost = false
+		}
+	}()
+	return br.IsGhost(userID)
+}
+
+func (br *TeamsBridge) ensureBotJoinedManagementRoom(bot *appservice.IntentAPI, roomID id.RoomID, user *User, trigger string) bool {
+	if br == nil || bot == nil || user == nil || roomID == "" {
+		return false
+	}
+
+	if _, err := bot.JoinRoomByID(roomID); err != nil {
+		if br.isAlreadyJoinedJoinError(err) {
+			members, membersErr := bot.JoinedMembers(roomID)
+			if membersErr != nil {
+				br.ZLog.Warn().
+					Err(membersErr).
+					Str("trigger", trigger).
+					Str("room_id", roomID.String()).
+					Str("user", user.MXID.String()).
+					Msg("Failed to verify bot membership after already-joined join response")
+				return false
+			}
+			_, hasBot := members.Joined[bot.UserID]
+			return hasBot
+		}
+		br.ZLog.Warn().
+			Err(err).
+			Str("trigger", trigger).
+			Str("room_id", roomID.String()).
+			Str("user", user.MXID.String()).
+			Msg("Failed to join management room")
+		return false
+	}
+	return true
+}
+
+func (br *TeamsBridge) claimManagementRoomAfterJoin(bot *appservice.IntentAPI, roomID id.RoomID, user *User, trigger string) {
 	if br == nil || bot == nil || user == nil || roomID == "" {
 		return
 	}
 
-	if _, err := bot.JoinRoomByID(roomID); err != nil {
-		br.ZLog.Warn().
-			Err(err).
-			Str("room_id", roomID.String()).
-			Str("user", user.MXID.String()).
-			Msg("Failed to join management room")
-		return
-	}
-
 	br.ZLog.Info().
+		Str("trigger", trigger).
 		Str("room_id", roomID.String()).
 		Str("user", user.MXID.String()).
 		Msg("Claiming management room")
@@ -231,10 +330,30 @@ func (br *TeamsBridge) claimManagementRoomOnInvite(bot *appservice.IntentAPI, ro
 	if err != nil {
 		br.ZLog.Warn().
 			Err(err).
+			Str("trigger", trigger).
 			Str("room_id", roomID.String()).
 			Str("user", user.MXID.String()).
 			Msg("Failed to send management room readiness message")
 	}
+}
+
+func (br *TeamsBridge) claimManagementRoom(bot *appservice.IntentAPI, roomID id.RoomID, user *User, trigger string) {
+	if !br.ensureBotJoinedManagementRoom(bot, roomID, user, trigger) {
+		return
+	}
+	br.claimManagementRoomAfterJoin(bot, roomID, user, trigger)
+}
+
+func (br *TeamsBridge) isImplicitDMClaimCandidate(members *mautrix.RespJoinedMembers, sender id.UserID) bool {
+	if br == nil || br.Bot == nil || members == nil || sender == "" {
+		return false
+	}
+	if len(members.Joined) != 2 {
+		return false
+	}
+	_, hasSender := members.Joined[sender]
+	_, hasBot := members.Joined[br.Bot.UserID]
+	return hasSender && hasBot
 }
 
 func (br *TeamsBridge) CreatePrivatePortal(roomID id.RoomID, user bridge.User, _ bridge.Ghost) {
@@ -242,24 +361,105 @@ func (br *TeamsBridge) CreatePrivatePortal(roomID id.RoomID, user bridge.User, _
 	if !ok {
 		return
 	}
-	br.claimManagementRoomOnInvite(br.Bot, roomID, typedUser)
+	br.claimManagementRoom(br.Bot, roomID, typedUser, "invite")
+}
+
+var registerImplicitDMOnce sync.Once
+
+func (br *TeamsBridge) handleBotInviteManagementRoomClaim(evt *event.Event) {
+	registerImplicitDMOnce.Do(func() {
+		fmt.Println("PROBE: registering implicit DM pre-handler (lazy)")
+		br.EventProcessor.PrependHandler(
+			event.EventMessage,
+			br.handleImplicitDMManagementRoomClaim,
+		)
+	})
+
+	if br == nil || evt == nil || br.Bot == nil {
+		return
+	}
+
+	memberContent := evt.Content.AsMember()
+	if memberContent.Membership != event.MembershipInvite || !memberContent.IsDirect {
+		return
+	}
+	if id.UserID(evt.GetStateKey()) != br.Bot.UserID {
+		return
+	}
+
+	user := br.getUserForManagementRoomClaim(evt.Sender)
+	if user == nil {
+		return
+	}
+	if user.GetPermissionLevel() < bridgeconfig.PermissionLevelUser {
+		return
+	}
+
+	br.claimManagementRoom(br.Bot, evt.RoomID, user, "invite")
+}
+
+func (br *TeamsBridge) handleImplicitDMManagementRoomClaim(evt *event.Event) {
+	if br == nil || evt == nil || br.Bot == nil {
+		return
+	}
+	br.ZLog.Info().
+		Str("processor_ptr", fmt.Sprintf("%p", br.EventProcessor)).
+		Str("event_type", evt.Type.String()).
+		Str("room", evt.RoomID.String()).
+		Str("sender", evt.Sender.String()).
+		Msg("HANDLE message entered")
+	if evt.Type != event.EventMessage || evt.Sender == br.Bot.UserID || br.isGhostForManagementRoomClaim(evt.Sender) {
+		return
+	}
+
+	user := br.getUserForManagementRoomClaim(evt.Sender)
+	if user == nil || user.GetPermissionLevel() < bridgeconfig.PermissionLevelUser || user.GetManagementRoomID() != "" {
+		return
+	}
+
+	if !br.ensureBotJoinedManagementRoom(br.Bot, evt.RoomID, user, "implicit_dm") {
+		return
+	}
+
+	members, err := br.Bot.JoinedMembers(evt.RoomID)
+	if err != nil {
+		br.ZLog.Warn().
+			Err(err).
+			Str("trigger", "implicit_dm").
+			Str("room_id", evt.RoomID.String()).
+			Str("user", user.MXID.String()).
+			Msg("Failed to fetch room members for implicit DM claim")
+		return
+	}
+	if !br.isImplicitDMClaimCandidate(members, evt.Sender) {
+		br.ZLog.Debug().
+			Str("trigger", "implicit_dm").
+			Str("room_id", evt.RoomID.String()).
+			Str("user", user.MXID.String()).
+			Int("joined_member_count", len(members.Joined)).
+			Msg("Skipping implicit DM claim: room is not a direct chat between sender and bot")
+		return
+	}
+
+	br.claimManagementRoomAfterJoin(br.Bot, evt.RoomID, user, "implicit_dm")
+}
+
+func (br *TeamsBridge) getUserForManagementRoomClaim(userID id.UserID) *User {
+	if userID == "" || br.Bot == nil || userID == br.Bot.UserID || br.isGhostForManagementRoomClaim(userID) {
+		return nil
+	}
+
+	br.usersLock.Lock()
+	defer br.usersLock.Unlock()
+
+	user, ok := br.usersByMXID[userID]
+	if ok {
+		return user
+	}
+	return br.loadUser(br.DB.User.GetByMXID(userID), &userID)
 }
 
 func main() {
-	// if handled, exitCode := runDevReadReceiptIfRequested(os.Args[1:]); handled {
-	// 	os.Exit(exitCode)
-	// }
-	// if handled, exitCode := runDevTypingIfRequested(os.Args[1:]); handled {
-	// 	os.Exit(exitCode)
-	// }
-	// if handled, exitCode := runDevSendIfRequested(os.Args[1:]); handled {
-	// 	os.Exit(exitCode)
-	// }
-	// if handled, exitCode := runDevReactIfRequested(os.Args[1:]); handled {
-	// 	os.Exit(exitCode)
-	// }
-	// runTeamsAuthTestIfRequested(os.Args)
-	// runTeamsPollTestIfRequested(os.Args)
 	br := &TeamsBridge{
 		usersByMXID: make(map[id.UserID]*User),
 		usersByID:   make(map[string]*User),

@@ -173,6 +173,17 @@ func loadConfig(path string) (*config.Config, error) {
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, err
 	}
+	absolutePath, err := filepath.Abs(path)
+	if err != nil {
+		absolutePath = path
+	}
+	token := cfg.AppService.ASToken
+	prefix := token
+	if len(prefix) > 8 {
+		prefix = prefix[:8]
+	}
+	fmt.Println("CONFIG PATH:", absolutePath)
+	fmt.Println("AS TOKEN PREFIX:", prefix)
 	return cfg, nil
 }
 
