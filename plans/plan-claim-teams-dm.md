@@ -2,7 +2,7 @@ Open questions:
 - None; please flag any additional expectations for DM claim behavior before implementation.
 
 ☑ Phase 1 – Implement idempotent DM claim helper and hook it to CreatePrivatePortal.
-☐ Phase 2 – Unit test the claim helper with stubbed bridge user/bot behaviors.
+☑ Phase 2 – Unit test the claim helper with stubbed bridge user/bot behaviors.
 
 Phase 1 – Implement idempotent DM claim helper and hook CreatePrivatePortal
 Files:
