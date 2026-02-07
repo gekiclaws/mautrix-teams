@@ -30,6 +30,7 @@ import (
 	"go.mau.fi/util/configupgrade"
 	"go.mau.fi/util/exsync"
 	"golang.org/x/sync/semaphore"
+	"maunium.net/go/mautrix/appservice"
 	"maunium.net/go/mautrix/bridge"
 	"maunium.net/go/mautrix/bridge/commands"
 	"maunium.net/go/mautrix/event"
@@ -117,7 +118,9 @@ func (br *TeamsBridge) GetConfigPtr() interface{} {
 
 func (br *TeamsBridge) Init() {
 	br.CommandProcessor = commands.NewProcessor(&br.Bridge)
+	br.ZLog.Info().Msg("commands: RegisterCommands() starting")
 	br.RegisterCommands()
+	br.ZLog.Info().Msg("commands: RegisterCommands() done")
 	br.EventProcessor.On(event.StateTombstone, br.HandleTombstone)
 
 	matrixHTMLParser.PillConverter = br.pillConverter
@@ -200,8 +203,46 @@ func (br *TeamsBridge) GetIGhost(mxid id.UserID) bridge.Ghost {
 	return p
 }
 
-func (br *TeamsBridge) CreatePrivatePortal(id id.RoomID, user bridge.User, ghost bridge.Ghost) {
-	//TODO implement
+func (br *TeamsBridge) claimManagementRoomOnInvite(bot *appservice.IntentAPI, roomID id.RoomID, user *User) {
+	if br == nil || bot == nil || user == nil || roomID == "" {
+		return
+	}
+
+	if _, err := bot.JoinRoomByID(roomID); err != nil {
+		br.ZLog.Warn().
+			Err(err).
+			Str("room_id", roomID.String()).
+			Str("user", user.MXID.String()).
+			Msg("Failed to join management room")
+		return
+	}
+
+	br.ZLog.Info().
+		Str("room_id", roomID.String()).
+		Str("user", user.MXID.String()).
+		Msg("Claiming management room")
+
+	user.SetManagementRoom(roomID)
+
+	_, err := bot.SendMessageEvent(roomID, event.EventMessage, &event.MessageEventContent{
+		MsgType: event.MsgText,
+		Body:    "Teams bridge ready. Use !login to activate.",
+	})
+	if err != nil {
+		br.ZLog.Warn().
+			Err(err).
+			Str("room_id", roomID.String()).
+			Str("user", user.MXID.String()).
+			Msg("Failed to send management room readiness message")
+	}
+}
+
+func (br *TeamsBridge) CreatePrivatePortal(roomID id.RoomID, user bridge.User, _ bridge.Ghost) {
+	typedUser, ok := user.(*User)
+	if !ok {
+		return
+	}
+	br.claimManagementRoomOnInvite(br.Bot, roomID, typedUser)
 }
 
 func main() {

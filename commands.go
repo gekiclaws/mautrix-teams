@@ -46,6 +46,7 @@ var cmdTeamsLogin = &commands.FullHandler{
 }
 
 func fnTeamsLogin(ce *WrappedCommandEvent) {
+	ce.ZLog.Info().Msg("fnTeamsLogin invoked")
 	state, err := ce.Bridge.LoadTeamsAuth(time.Now().UTC())
 	if err != nil {
 		ce.Reply("%s", teamsLoginAuthFailureReply(err, ce.Bridge.ConfigPath))
