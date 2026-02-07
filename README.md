@@ -1,19 +1,20 @@
 # mautrix-teams
-A Matrix-Teams puppeting bridge based on [discordgo](https://github.com/bwmarrin/discordgo).
+A Matrix-Teams puppeting bridge.
 
-## Documentation
-All setup and usage instructions are located on [docs.mau.fi]. Some quick links:
-
-[docs.mau.fi]: https://docs.mau.fi/bridges/go/discord/index.html
-
+## How to setup bridge
 * [Bridge setup](https://docs.mau.fi/bridges/go/setup.html?bridge=discord)
-  (or [with Docker](https://docs.mau.fi/bridges/general/docker-setup.html?bridge=discord))
-* Basic usage: [Authentication](https://docs.mau.fi/bridges/go/discord/authentication.html),
-  [Relaying with webhooks](https://docs.mau.fi/bridges/go/discord/relay.html)
 
-### Features & Roadmap
-[ROADMAP.md](https://github.com/mautrix/teams/blob/main/ROADMAP.md)
-contains a general overview of what is supported by the bridge.
+From repo root:
+1. Run `bbctl login`, then `bbctl register sh-msteams`
+2. Copy the registration file details verbatim into `registration.yaml`
+3. Copy `example-config.yaml` into `config.yaml`
+4. Use the details from `bbctl register sh-msteams` log to update config.yaml fields:
+- Homeserver URL -> homeserver.address
+- Homeserver domain -> homeserver.domain
+- Your user ID -> add to bridge.permissions this line: `"<Your user ID>": admin`
 
-## Discussion
-Matrix room: [#discord:maunium.net](https://matrix.to/#/#discord:maunium.net)
+## How to run the bridge
+From repo root:
+1. Get Teams auth credentials via `go run ./cmd/teams-login/`
+2. Build the bridge via `go build -o mautrix-teams`
+3. Run the bridge via `./mautrix-teams`
