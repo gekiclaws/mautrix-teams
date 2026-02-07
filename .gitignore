@@ -5,9 +5,9 @@
 *.db*
 *.log*
 
-/mautrix-discord
 /start
 synapse-data/localhost.signing.key
 auth.json
 cookies.json
 .env
+mautrix-teams
