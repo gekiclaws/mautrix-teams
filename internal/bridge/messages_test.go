@@ -377,7 +377,7 @@ func TestIngestThreadUsesSendIntentMXIDForMessageMap(t *testing.T) {
 	if entry.MXID != "$original" {
 		t.Fatalf("expected original mxid mapping, got %s", entry.MXID)
 	}
-	if entry.ThreadID != "thread-1" || entry.TeamsMessageID != "m1" {
+	if entry.ThreadID != "thread-1" || entry.TeamsMessageID != "msg/1" {
 		t.Fatalf("unexpected mapping: %#v", entry)
 	}
 }
