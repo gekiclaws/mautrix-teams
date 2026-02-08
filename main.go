@@ -94,6 +94,7 @@ type DiscordBridge struct {
 	TeamsConsumerTyper   *teamsbridge.TeamsConsumerTyper
 	TeamsUnreadCycles    *teamsbridge.UnreadCycleTracker
 	TeamsConsumerReceipt *teamsbridge.TeamsConsumerReceiptSender
+	teamsAdminInviteWarn sync.Once
 }
 
 func (br *DiscordBridge) GetExampleConfig() string {
@@ -224,13 +225,13 @@ func main() {
 	br.Bridge = bridge.Bridge{
 		Name:              "mautrix-teams",
 		URL:               "https://github.com/mautrix/teams",
-		Description:       "A Matrix-Discord puppeting bridge.",
+		Description:       "A Matrix-Teams puppeting bridge.",
 		Version:           "0.7.5",
-		ProtocolName:      "Discord",
-		BeeperServiceName: "discordgo",
-		BeeperNetworkName: "discord",
+		ProtocolName:      "Teams",
+		BeeperServiceName: "teams",
+		BeeperNetworkName: "msteams",
 
-		CryptoPickleKey: "maunium.net/go/mautrix-whatsapp",
+		CryptoPickleKey: "maunium.net/go/mautrix-teams",
 
 		ConfigUpgrader: &configupgrade.StructUpgrader{
 			SimpleUpgrader: configupgrade.SimpleUpgrader(config.DoUpgrade),

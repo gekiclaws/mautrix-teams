@@ -238,26 +238,34 @@ func (br *DiscordBridge) getAllUsersWithToken() []*User {
 }
 
 func (br *DiscordBridge) startUsers() {
-	br.ZLog.Debug().Msg("Starting users")
+	br.ZLog.Debug().Msg("Starting bridge background tasks")
 
-	usersWithToken := br.getAllUsersWithToken()
-	for _, u := range usersWithToken {
-		go u.startupTryConnect(0)
-	}
-	if len(usersWithToken) == 0 {
-		br.SendGlobalBridgeState(status.BridgeState{StateEvent: status.StateUnconfigured}.Fill(nil))
-	}
+	br.SendGlobalBridgeState(status.BridgeState{
+		StateEvent: status.StateConnected,
+	}.Fill(nil))
 
-	br.ZLog.Debug().Msg("Starting custom puppets")
-	for _, customPuppet := range br.GetAllPuppetsWithCustomMXID() {
-		go func(puppet *Puppet) {
-			br.ZLog.Debug().Str("user_id", puppet.CustomMXID.String()).Msg("Starting custom puppet")
+	br.ZLog.Debug().Msg("Bridge marked as CONNECTED")
 
-			if err := puppet.StartCustomMXID(true); err != nil {
-				puppet.log.Error().Err(err).Msg("Failed to start custom puppet")
-			}
-		}(customPuppet)
-	}
+	// br.ZLog.Debug().Msg("Starting users")
+
+	// usersWithToken := br.getAllUsersWithToken()
+	// for _, u := range usersWithToken {
+	// 	go u.startupTryConnect(0)
+	// }
+	// if len(usersWithToken) == 0 {
+	// 	br.SendGlobalBridgeState(status.BridgeState{StateEvent: status.StateUnconfigured}.Fill(nil))
+	// }
+
+	// br.ZLog.Debug().Msg("Starting custom puppets")
+	// for _, customPuppet := range br.GetAllPuppetsWithCustomMXID() {
+	// 	go func(puppet *Puppet) {
+	// 		br.ZLog.Debug().Str("user_id", puppet.CustomMXID.String()).Msg("Starting custom puppet")
+
+	// 		if err := puppet.StartCustomMXID(true); err != nil {
+	// 			puppet.log.Error().Err(err).Msg("Failed to start custom puppet")
+	// 		}
+	// 	}(customPuppet)
+	// }
 }
 
 func (user *User) startupTryConnect(retryCount int) {

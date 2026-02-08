@@ -377,7 +377,7 @@ func TestIngestThreadUsesSendIntentMXIDForMessageMap(t *testing.T) {
 	if entry.MXID != "$original" {
 		t.Fatalf("expected original mxid mapping, got %s", entry.MXID)
 	}
-	if entry.ThreadID != "thread-1" || entry.TeamsMessageID != "m1" {
+	if entry.ThreadID != "thread-1" || entry.TeamsMessageID != "msg/1" {
 		t.Fatalf("unexpected mapping: %#v", entry)
 	}
 }
@@ -675,5 +675,45 @@ func TestIngestThreadSkipsProfileForNonUserID(t *testing.T) {
 	}
 	if len(store.updatedIDs) != 0 {
 		t.Fatalf("expected no profile updates, got %#v", store.updatedIDs)
+	}
+}
+
+func TestIngestThreadAddsFormattedBodyFields(t *testing.T) {
+	lister := &fakeMessageLister{
+		messages: []model.RemoteMessage{
+			{
+				SequenceID:    "1",
+				Body:          "hi\nthere",
+				FormattedBody: "<p>hi</p><p>there</p>",
+				SenderID:      "8:user-6",
+				IMDisplayName: "User Six",
+			},
+		},
+	}
+	sender := &fakeMatrixSender{}
+	ingestor := &MessageIngestor{
+		Lister: lister,
+		Sender: sender,
+		Log:    zerolog.New(io.Discard),
+	}
+
+	res, err := ingestor.IngestThread(context.Background(), "thread-1", "@oneToOne.skype", "!room:example", nil)
+	if err != nil {
+		t.Fatalf("IngestThread failed: %v", err)
+	}
+	if !res.Advanced {
+		t.Fatalf("expected advancement on success")
+	}
+	if len(sender.sent) != 1 || sender.sent[0] != "hi\nthere" {
+		t.Fatalf("unexpected sent body: %#v", sender.sent)
+	}
+	if len(sender.extra) != 1 {
+		t.Fatalf("expected one extra payload, got %d", len(sender.extra))
+	}
+	if sender.extra[0]["format"] != "org.matrix.custom.html" {
+		t.Fatalf("unexpected format field: %#v", sender.extra[0]["format"])
+	}
+	if sender.extra[0]["formatted_body"] != "<p>hi</p><p>there</p>" {
+		t.Fatalf("unexpected formatted_body: %#v", sender.extra[0]["formatted_body"])
 	}
 }

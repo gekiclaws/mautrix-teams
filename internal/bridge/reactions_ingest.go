@@ -34,7 +34,12 @@ func (s *BotMatrixReactionSender) SendReaction(roomID id.RoomID, target id.Event
 			Key:     key,
 		},
 	}
-	wrapped := event.Content{Parsed: &content}
+	wrapped := event.Content{
+		Parsed: &content,
+		Raw: map[string]any{
+			"com.beeper.teams.ingested_reaction": true,
+		},
+	}
 	resp, err := s.Client.SendMessageEvent(roomID, event.EventReaction, &wrapped)
 	if err != nil {
 		return "", err
@@ -83,12 +88,16 @@ func (r *TeamsReactionIngestor) IngestMessageReactions(ctx context.Context, thre
 	if threadID == "" {
 		return errors.New("missing thread id")
 	}
-	if msg.MessageID == "" {
+	teamsMessageID := NormalizeTeamsReactionMessageID(msg.SequenceID)
+	if teamsMessageID == "" {
+		teamsMessageID = strings.TrimSpace(msg.MessageID)
+	}
+	if teamsMessageID == "" {
 		return errors.New("missing teams message id")
 	}
 
 	current, timestamps := buildReactionSet(msg.Reactions)
-	existing, err := r.Reactions.ListByMessage(threadID, msg.MessageID)
+	existing, err := r.Reactions.ListByMessage(threadID, teamsMessageID)
 	if err != nil {
 		return err
 	}
@@ -107,7 +116,7 @@ func (r *TeamsReactionIngestor) IngestMessageReactions(ctx context.Context, thre
 
 	target := targetMXID
 	if target == "" {
-		if mapping := r.Messages.GetByTeamsMessageID(threadID, msg.MessageID); mapping != nil {
+		if mapping := r.Messages.GetByTeamsMessageID(threadID, teamsMessageID); mapping != nil {
 			target = mapping.MXID
 		}
 	}
@@ -119,7 +128,7 @@ func (r *TeamsReactionIngestor) IngestMessageReactions(ctx context.Context, thre
 		if target == "" {
 			r.Log.Info().
 				Str("thread_id", threadID).
-				Str("teams_message_id", msg.MessageID).
+				Str("teams_message_id", teamsMessageID).
 				Str("emotion_key", reaction.EmotionKey).
 				Str("user_mri", reaction.UserMRI).
 				Msg("reaction dropped: no target mxid")
@@ -129,7 +138,7 @@ func (r *TeamsReactionIngestor) IngestMessageReactions(ctx context.Context, thre
 		if !ok {
 			r.Log.Info().
 				Str("thread_id", threadID).
-				Str("teams_message_id", msg.MessageID).
+				Str("teams_message_id", teamsMessageID).
 				Str("emotion_key", reaction.EmotionKey).
 				Str("user_mri", reaction.UserMRI).
 				Msg("reaction dropped: unmapped emotion key")
@@ -137,7 +146,7 @@ func (r *TeamsReactionIngestor) IngestMessageReactions(ctx context.Context, thre
 		}
 		log := r.Log.With().
 			Str("thread_id", threadID).
-			Str("teams_message_id", msg.MessageID).
+			Str("teams_message_id", teamsMessageID).
 			Str("emotion_key", reaction.EmotionKey).
 			Str("user_mri", reaction.UserMRI).
 			Str("target_mxid", target.String()).
@@ -153,7 +162,7 @@ func (r *TeamsReactionIngestor) IngestMessageReactions(ctx context.Context, thre
 		}
 		if err := r.Reactions.Insert(&database.TeamsReactionState{
 			ThreadID:       threadID,
-			TeamsMessageID: msg.MessageID,
+			TeamsMessageID: teamsMessageID,
 			EmotionKey:     reaction.EmotionKey,
 			UserMRI:        reaction.UserMRI,
 			MatrixEventID:  eventID,
@@ -173,7 +182,7 @@ func (r *TeamsReactionIngestor) IngestMessageReactions(ctx context.Context, thre
 		}
 		log := r.Log.With().
 			Str("thread_id", threadID).
-			Str("teams_message_id", msg.MessageID).
+			Str("teams_message_id", teamsMessageID).
 			Str("emotion_key", state.EmotionKey).
 			Str("user_mri", state.UserMRI).
 			Str("reaction_mxid", state.MatrixEventID.String()).
@@ -183,7 +192,7 @@ func (r *TeamsReactionIngestor) IngestMessageReactions(ctx context.Context, thre
 			log.Error().Err(err).Msg("matrix reaction remove failed")
 			continue
 		}
-		if err := r.Reactions.Delete(threadID, msg.MessageID, state.EmotionKey, state.UserMRI); err != nil {
+		if err := r.Reactions.Delete(threadID, teamsMessageID, state.EmotionKey, state.UserMRI); err != nil {
 			log.Error().Err(err).Msg("failed to delete teams reaction state")
 		} else {
 			log.Info().Msg("matrix reaction removed")

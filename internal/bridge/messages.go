@@ -47,6 +47,13 @@ func (s *BotMatrixSender) SendText(roomID id.RoomID, body string, extra map[stri
 		MsgType: event.MsgText,
 		Body:    body,
 	}
+	if formattedBody, ok := extra["formatted_body"].(string); ok && formattedBody != "" {
+		content.FormattedBody = formattedBody
+		content.Format = event.FormatHTML
+	}
+	if format, ok := extra["format"].(string); ok && format != "" {
+		content.Format = event.Format(format)
+	}
 	wrapped := event.Content{Parsed: &content, Raw: extra}
 	resp, err := s.Client.SendMessageEvent(roomID, event.EventMessage, &wrapped)
 	if err != nil {
@@ -192,14 +199,19 @@ func (m *MessageIngestor) IngestThread(ctx context.Context, threadID string, con
 			displayName = senderID
 		}
 
-		var extra map[string]any
+		extra := make(map[string]any)
 		if senderID != "" && displayName != "" {
-			extra = map[string]any{
-				"com.beeper.per_message_profile": map[string]any{
-					"id":          senderID,
-					"displayname": displayName,
-				},
+			extra["com.beeper.per_message_profile"] = map[string]any{
+				"id":          senderID,
+				"displayname": displayName,
 			}
+		}
+		if msg.FormattedBody != "" {
+			extra["format"] = string(event.FormatHTML)
+			extra["formatted_body"] = msg.FormattedBody
+		}
+		if len(extra) == 0 {
+			extra = nil
 		}
 
 		var intentMXID id.EventID
@@ -235,7 +247,11 @@ func (m *MessageIngestor) IngestThread(ctx context.Context, threadID string, con
 				Str("event_id", maybeMapMXID.String()).
 				Msg("teams message matched existing send intent, skipping matrix send")
 		}
-		if m.MessageMap != nil && msg.MessageID != "" && maybeMapMXID != "" {
+		teamsMessageID := NormalizeTeamsReactionMessageID(msg.SequenceID)
+		if teamsMessageID == "" {
+			teamsMessageID = strings.TrimSpace(msg.MessageID)
+		}
+		if m.MessageMap != nil && teamsMessageID != "" && maybeMapMXID != "" {
 			var messageTS *int64
 			if !msg.Timestamp.IsZero() {
 				ts := msg.Timestamp.UnixMilli()
@@ -249,7 +265,7 @@ func (m *MessageIngestor) IngestThread(ctx context.Context, threadID string, con
 			if err := m.MessageMap.Upsert(&database.TeamsMessageMap{
 				MXID:           maybeMapMXID,
 				ThreadID:       threadID,
-				TeamsMessageID: msg.MessageID,
+				TeamsMessageID: teamsMessageID,
 				MessageTS:      messageTS,
 				SenderID:       senderPtr,
 			}); err != nil {
@@ -301,10 +317,14 @@ func (m *MessageIngestor) ingestReactions(ctx context.Context, threadID string, 
 		return
 	}
 	if err := m.ReactionIngestor.IngestMessageReactions(ctx, threadID, roomID, msg, targetMXID); err != nil {
+		teamsMessageID := NormalizeTeamsReactionMessageID(msg.SequenceID)
+		if teamsMessageID == "" {
+			teamsMessageID = msg.MessageID
+		}
 		m.Log.Error().
 			Err(err).
 			Str("thread_id", threadID).
-			Str("teams_message_id", msg.MessageID).
+			Str("teams_message_id", teamsMessageID).
 			Str("seq", msg.SequenceID).
 			Msg("failed to ingest teams reactions")
 	}
