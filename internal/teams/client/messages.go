@@ -92,6 +92,7 @@ func (c *Client) ListMessages(ctx context.Context, conversationID string, sinceS
 				Str("message_id", msg.ID).
 				Msg("teams message missing sender id")
 		}
+		content := model.ExtractContent(msg.Content)
 		result = append(result, model.RemoteMessage{
 			MessageID:        msg.ID,
 			ClientMessageID:  msg.ClientMessageID,
@@ -100,7 +101,8 @@ func (c *Client) ListMessages(ctx context.Context, conversationID string, sinceS
 			IMDisplayName:    msg.IMDisplayName,
 			TokenDisplayName: msg.FromDisplayNameInToken,
 			Timestamp:        model.ParseTimestamp(msg.CreatedTime),
-			Body:             model.ExtractBody(msg.Content),
+			Body:             content.Body,
+			FormattedBody:    content.FormattedBody,
 			Reactions:        model.ExtractReactions(msg.Properties),
 		})
 	}

@@ -47,6 +47,13 @@ func (s *BotMatrixSender) SendText(roomID id.RoomID, body string, extra map[stri
 		MsgType: event.MsgText,
 		Body:    body,
 	}
+	if formattedBody, ok := extra["formatted_body"].(string); ok && formattedBody != "" {
+		content.FormattedBody = formattedBody
+		content.Format = event.FormatHTML
+	}
+	if format, ok := extra["format"].(string); ok && format != "" {
+		content.Format = event.Format(format)
+	}
 	wrapped := event.Content{Parsed: &content, Raw: extra}
 	resp, err := s.Client.SendMessageEvent(roomID, event.EventMessage, &wrapped)
 	if err != nil {
@@ -192,14 +199,19 @@ func (m *MessageIngestor) IngestThread(ctx context.Context, threadID string, con
 			displayName = senderID
 		}
 
-		var extra map[string]any
+		extra := make(map[string]any)
 		if senderID != "" && displayName != "" {
-			extra = map[string]any{
-				"com.beeper.per_message_profile": map[string]any{
-					"id":          senderID,
-					"displayname": displayName,
-				},
+			extra["com.beeper.per_message_profile"] = map[string]any{
+				"id":          senderID,
+				"displayname": displayName,
 			}
+		}
+		if msg.FormattedBody != "" {
+			extra["format"] = string(event.FormatHTML)
+			extra["formatted_body"] = msg.FormattedBody
+		}
+		if len(extra) == 0 {
+			extra = nil
 		}
 
 		var intentMXID id.EventID

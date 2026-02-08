@@ -2,7 +2,6 @@ package model
 
 import (
 	"encoding/json"
-	"html"
 	"strconv"
 	"strings"
 	"time"
@@ -18,7 +17,13 @@ type RemoteMessage struct {
 	TokenDisplayName string
 	Timestamp        time.Time
 	Body             string
+	FormattedBody    string
 	Reactions        []MessageReaction
+}
+
+type MessageContent struct {
+	Body          string
+	FormattedBody string
 }
 
 type MessageReaction struct {
@@ -32,20 +37,24 @@ type MessageReactionUser struct {
 }
 
 func ExtractBody(content json.RawMessage) string {
+	return ExtractContent(content).Body
+}
+
+func ExtractContent(content json.RawMessage) MessageContent {
 	if len(content) == 0 {
-		return ""
+		return MessageContent{}
 	}
 	var plain string
 	if err := json.Unmarshal(content, &plain); err == nil {
-		return html.UnescapeString(plain)
+		return NormalizeMessageBody(plain)
 	}
 	var obj struct {
 		Text string `json:"text"`
 	}
 	if err := json.Unmarshal(content, &obj); err == nil {
-		return html.UnescapeString(obj.Text)
+		return NormalizeMessageBody(obj.Text)
 	}
-	return ""
+	return MessageContent{}
 }
 
 func ExtractSenderID(raw json.RawMessage) string {

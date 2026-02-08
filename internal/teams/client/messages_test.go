@@ -129,7 +129,8 @@ func TestListMessagesContentVariants(t *testing.T) {
 			`{"id":"m1","sequenceId":"1","content":"hey how&apos;ve u been?"},` +
 			`{"id":"m2","sequenceId":"2","content":{"text":"hello"}},` +
 			`{"id":"m3","sequenceId":"3","content":""},` +
-			`{"id":"m4","sequenceId":"4","content":123}` +
+			`{"id":"m4","sequenceId":"4","content":123},` +
+			`{"id":"m5","sequenceId":"5","content":"<p>hi</p><p>there<br>friend</p>"}` +
 			`]}`))
 	}))
 	defer server.Close()
@@ -142,7 +143,7 @@ func TestListMessagesContentVariants(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListMessages failed: %v", err)
 	}
-	if len(msgs) != 4 {
+	if len(msgs) != 5 {
 		t.Fatalf("unexpected messages length: %d", len(msgs))
 	}
 	if !strings.Contains(gotPath, "/conversations/") || !strings.Contains(gotPath, "/messages") {
@@ -159,6 +160,12 @@ func TestListMessagesContentVariants(t *testing.T) {
 	}
 	if msgs[3].Body != "" {
 		t.Fatalf("expected empty body for unsupported content")
+	}
+	if msgs[4].Body != "hi\nthere\nfriend" {
+		t.Fatalf("unexpected body for html content: %q", msgs[4].Body)
+	}
+	if msgs[4].FormattedBody != "<p>hi</p><p>there<br>friend</p>" {
+		t.Fatalf("unexpected formatted body for html content: %q", msgs[4].FormattedBody)
 	}
 }
 
