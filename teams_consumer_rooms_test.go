@@ -63,7 +63,7 @@ func TestResolveTeamsAdminInviteMXIDsWarnsOnceWithoutExplicitAdmins(t *testing.T
 		t.Fatalf("expected no explicit admin mxids, got %v and %v", first, second)
 	}
 
-	const warnMsg = "no explicit admin mxids found in bridge.permissions, skipping teams room admin invites"
+	const warnMsg = "no explicit admin mxids found in bridge.permissions, skipping teams room admin membership reconciliation"
 	if got := strings.Count(buf.String(), warnMsg); got != 1 {
 		t.Fatalf("expected warning once, got %d occurrences in logs: %s", got, buf.String())
 	}

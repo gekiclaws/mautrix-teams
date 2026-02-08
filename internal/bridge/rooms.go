@@ -42,16 +42,61 @@ func (i *IntentAdminInviter) EnsureInvited(roomID id.RoomID, userID id.UserID) (
 	if i == nil || i.Intent == nil {
 		return "", errors.New("missing bot intent")
 	}
-	if i.Intent.StateStore != nil {
-		if i.Intent.StateStore.IsInRoom(roomID, userID) {
-			return "already_joined", nil
+
+	initialMembership, err := i.getMembership(roomID, userID)
+	if err != nil {
+		return "", err
+	}
+	if initialMembership == event.MembershipJoin {
+		return "already_joined", nil
+	}
+
+	inviteResult := ""
+	switch initialMembership {
+	case event.MembershipInvite:
+		// Retry invite for pending invites to recover from resync storms where auto-join is delayed.
+		inviteResult, err = i.sendInvite(roomID, userID)
+		if err != nil {
+			return "", err
 		}
-		if i.Intent.StateStore.IsInvited(roomID, userID) {
-			return "already_invited", nil
+	default:
+		inviteResult, err = i.sendInvite(roomID, userID)
+		if err != nil {
+			return "", err
 		}
 	}
 
-	_, err := i.Intent.InviteUser(roomID, &mautrix.ReqInviteUser{UserID: userID})
+	finalMembership, err := i.getMembership(roomID, userID)
+	if err != nil {
+		return inviteResult, err
+	}
+	switch finalMembership {
+	case event.MembershipJoin:
+		if inviteResult == "already_joined" || inviteResult == "" {
+			return "already_joined", nil
+		}
+		return "joined_after_invite", nil
+	case event.MembershipInvite:
+		return "invite_pending", nil
+	default:
+		if inviteResult == "already_invited" || inviteResult == "invited" {
+			return "invite_pending", nil
+		}
+	}
+
+	return inviteResult, nil
+}
+
+func (i *IntentAdminInviter) sendInvite(roomID id.RoomID, userID id.UserID) (string, error) {
+	content := event.Content{
+		Parsed: &event.MemberEventContent{
+			Membership: event.MembershipInvite,
+		},
+		Raw: map[string]interface{}{
+			"fi.mau.will_auto_accept": true,
+		},
+	}
+	_, err := i.Intent.SendStateEvent(roomID, event.StateMember, userID.String(), &content)
 	if err == nil {
 		if i.Intent.StateStore != nil {
 			i.Intent.StateStore.SetMembership(roomID, userID, event.MembershipInvite)
@@ -62,7 +107,7 @@ func (i *IntentAdminInviter) EnsureInvited(roomID id.RoomID, userID id.UserID) (
 	var httpErr mautrix.HTTPError
 	if errors.As(err, &httpErr) && httpErr.RespError != nil {
 		lowerErr := strings.ToLower(httpErr.RespError.Err)
-		if strings.Contains(lowerErr, "already in the room") {
+		if strings.Contains(lowerErr, "already in the room") || strings.Contains(lowerErr, "is already joined") {
 			if i.Intent.StateStore != nil {
 				i.Intent.StateStore.SetMembership(roomID, userID, event.MembershipJoin)
 			}
@@ -77,6 +122,28 @@ func (i *IntentAdminInviter) EnsureInvited(roomID id.RoomID, userID id.UserID) (
 	}
 
 	return "", err
+}
+
+func (i *IntentAdminInviter) getMembership(roomID id.RoomID, userID id.UserID) (event.Membership, error) {
+	if i.Intent.StateStore != nil {
+		if i.Intent.StateStore.IsInRoom(roomID, userID) {
+			return event.MembershipJoin, nil
+		}
+	}
+
+	var member event.MemberEventContent
+	err := i.Intent.StateEvent(roomID, event.StateMember, userID.String(), &member)
+	if err != nil {
+		if errors.Is(err, mautrix.MNotFound) {
+			return event.MembershipLeave, nil
+		}
+		return "", err
+	}
+
+	if i.Intent.StateStore != nil {
+		i.Intent.StateStore.SetMembership(roomID, userID, member.Membership)
+	}
+	return member.Membership, nil
 }
 
 func ResolveExplicitAdminMXIDs(permissions bridgeconfig.PermissionConfig) []id.UserID {
@@ -455,7 +522,16 @@ func (r *RoomsService) ensureAdminsInvited(threadID string, roomID id.RoomID) {
 			log.Err(err).Str("result", "invite_failed").Msg("matrix admin invite ensure failed")
 			continue
 		}
-		log.Str("result", result).Msg("matrix admin invite ensured")
+		if result == "already_joined" || result == "joined_after_invite" {
+			log.Str("result", result).Msg("matrix admin membership ensured")
+			continue
+		}
+		r.Log.Warn().
+			Str("room_id", roomID.String()).
+			Str("thread_id", threadID).
+			Str("admin_mxid", adminMXID.String()).
+			Str("result", result).
+			Msg("matrix admin is not joined after membership reconciliation")
 	}
 }
 
