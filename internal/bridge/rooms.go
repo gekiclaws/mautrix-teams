@@ -3,6 +3,7 @@ package teamsbridge
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 
@@ -22,6 +23,10 @@ type RoomCreator interface {
 
 type RoomAdminInviter interface {
 	EnsureInvited(roomID id.RoomID, userID id.UserID) (string, error)
+}
+
+type RoomStateReconciler interface {
+	EnsureRoomState(roomID id.RoomID, adminMXIDs []id.UserID) (historyResult string, powerResult string, err error)
 }
 
 type IntentAdminInviter struct {
@@ -102,13 +107,15 @@ type ClientRoomCreator struct {
 	Client      *mautrix.Client
 	Encryption  bridgeconfig.EncryptionConfig
 	RoomVersion string
+	AdminMXIDs  []id.UserID
 }
 
-func NewClientRoomCreator(client *mautrix.Client, cfg bridgeconfig.BridgeConfig) *ClientRoomCreator {
+func NewClientRoomCreator(client *mautrix.Client, cfg bridgeconfig.BridgeConfig, adminMXIDs []id.UserID) *ClientRoomCreator {
 	return &ClientRoomCreator{
 		Client:      client,
 		Encryption:  cfg.GetEncryptionConfig(),
 		RoomVersion: "11",
+		AdminMXIDs:  adminMXIDs,
 	}
 }
 
@@ -117,15 +124,7 @@ func (c *ClientRoomCreator) CreateRoom(thread model.Thread) (id.RoomID, error) {
 		return "", errors.New("missing matrix client")
 	}
 
-	initialState := []*event.Event{}
-	if c.Encryption.Default {
-		initialState = append(initialState, &event.Event{
-			Type: event.StateEncryption,
-			Content: event.Content{
-				Parsed: encryptionEventContent(c.Encryption),
-			},
-		})
-	}
+	initialState := roomInitialState(c.Encryption, c.Client.UserID, c.AdminMXIDs)
 
 	name := ""
 	if thread.IsOneToOne {
@@ -153,13 +152,15 @@ type IntentRoomCreator struct {
 	Intent      *appservice.IntentAPI
 	Encryption  bridgeconfig.EncryptionConfig
 	RoomVersion string
+	AdminMXIDs  []id.UserID
 }
 
-func NewIntentRoomCreator(intent *appservice.IntentAPI, cfg bridgeconfig.BridgeConfig) *IntentRoomCreator {
+func NewIntentRoomCreator(intent *appservice.IntentAPI, cfg bridgeconfig.BridgeConfig, adminMXIDs []id.UserID) *IntentRoomCreator {
 	return &IntentRoomCreator{
 		Intent:      intent,
 		Encryption:  cfg.GetEncryptionConfig(),
 		RoomVersion: "11",
+		AdminMXIDs:  adminMXIDs,
 	}
 }
 
@@ -171,15 +172,7 @@ func (c *IntentRoomCreator) CreateRoom(thread model.Thread) (id.RoomID, error) {
 		return "", err
 	}
 
-	initialState := []*event.Event{}
-	if c.Encryption.Default {
-		initialState = append(initialState, &event.Event{
-			Type: event.StateEncryption,
-			Content: event.Content{
-				Parsed: encryptionEventContent(c.Encryption),
-			},
-		})
-	}
+	initialState := roomInitialState(c.Encryption, c.Intent.UserID, c.AdminMXIDs)
 
 	name := ""
 	if thread.IsOneToOne {
@@ -219,19 +212,153 @@ func encryptionEventContent(cfg bridgeconfig.EncryptionConfig) *event.Encryption
 	return evt
 }
 
+func roomInitialState(cfg bridgeconfig.EncryptionConfig, creatorMXID id.UserID, adminMXIDs []id.UserID) []*event.Event {
+	initialState := []*event.Event{
+		{
+			Type: event.StateHistoryVisibility,
+			Content: event.Content{
+				Parsed: &event.HistoryVisibilityEventContent{
+					HistoryVisibility: event.HistoryVisibilityShared,
+				},
+			},
+		},
+		{
+			Type: event.StatePowerLevels,
+			Content: event.Content{
+				Parsed: roomInitialPowerLevels(creatorMXID, adminMXIDs),
+			},
+		},
+	}
+	if cfg.Default {
+		initialState = append(initialState, &event.Event{
+			Type: event.StateEncryption,
+			Content: event.Content{
+				Parsed: encryptionEventContent(cfg),
+			},
+		})
+	}
+	return initialState
+}
+
+func roomInitialPowerLevels(creatorMXID id.UserID, adminMXIDs []id.UserID) *event.PowerLevelsEventContent {
+	users := make(map[id.UserID]int, len(adminMXIDs)+1)
+	if creatorMXID != "" {
+		users[creatorMXID] = 100
+	}
+	for _, adminMXID := range adminMXIDs {
+		if _, ok := users[adminMXID]; !ok {
+			users[adminMXID] = 0
+		}
+	}
+	return &event.PowerLevelsEventContent{
+		Users: users,
+		Events: map[string]int{
+			event.EventMessage.String(): 0,
+		},
+	}
+}
+
+type IntentRoomStateReconciler struct {
+	Intent *appservice.IntentAPI
+}
+
+func NewIntentRoomStateReconciler(intent *appservice.IntentAPI) *IntentRoomStateReconciler {
+	return &IntentRoomStateReconciler{Intent: intent}
+}
+
+func (r *IntentRoomStateReconciler) EnsureRoomState(roomID id.RoomID, adminMXIDs []id.UserID) (string, string, error) {
+	if r == nil || r.Intent == nil {
+		return "", "", errors.New("missing bot intent")
+	}
+
+	historyResult := "already_shared"
+	var errs []error
+
+	var historyVisibility event.HistoryVisibilityEventContent
+	historyErr := r.Intent.StateEvent(roomID, event.StateHistoryVisibility, "", &historyVisibility)
+	needsHistoryUpdate := false
+	if historyErr != nil {
+		if errors.Is(historyErr, mautrix.MNotFound) {
+			needsHistoryUpdate = true
+		} else {
+			errs = append(errs, fmt.Errorf("get history visibility: %w", historyErr))
+		}
+	} else if historyVisibility.HistoryVisibility != event.HistoryVisibilityShared {
+		needsHistoryUpdate = true
+	}
+	if needsHistoryUpdate {
+		_, setErr := r.Intent.SendStateEvent(roomID, event.StateHistoryVisibility, "", &event.Content{
+			Parsed: &event.HistoryVisibilityEventContent{
+				HistoryVisibility: event.HistoryVisibilityShared,
+			},
+		})
+		if setErr != nil {
+			errs = append(errs, fmt.Errorf("set history visibility: %w", setErr))
+		} else {
+			historyResult = "set_shared"
+		}
+	}
+
+	powerResult := "no_admins"
+	if len(adminMXIDs) > 0 {
+		pl, plErr := r.Intent.PowerLevels(roomID)
+		if plErr != nil {
+			errs = append(errs, fmt.Errorf("get power levels: %w", plErr))
+		} else {
+			changed := ensureAdminSendPermissionLevels(pl, adminMXIDs)
+			if changed {
+				_, setErr := r.Intent.SetPowerLevels(roomID, pl)
+				if setErr != nil {
+					errs = append(errs, fmt.Errorf("set power levels: %w", setErr))
+					powerResult = "set_failed"
+				} else {
+					powerResult = "raised_admin_send_level"
+				}
+			} else {
+				powerResult = "already_sufficient"
+			}
+		}
+	}
+
+	return historyResult, powerResult, errors.Join(errs...)
+}
+
+func ensureAdminSendPermissionLevels(pl *event.PowerLevelsEventContent, adminMXIDs []id.UserID) bool {
+	if pl == nil || len(adminMXIDs) == 0 {
+		return false
+	}
+	if pl.Users == nil {
+		pl.Users = make(map[id.UserID]int)
+	}
+	if pl.Events == nil {
+		pl.Events = make(map[string]int)
+	}
+	requiredLevel := pl.GetEventLevel(event.EventMessage)
+	changed := false
+	for _, adminMXID := range adminMXIDs {
+		if pl.GetUserLevel(adminMXID) < requiredLevel {
+			pl.SetUserLevel(adminMXID, requiredLevel)
+			changed = true
+		}
+	}
+	return changed
+}
+
 type RoomsService struct {
 	Store        ThreadStore
 	Creator      RoomCreator
 	AdminInviter RoomAdminInviter
+	Reconciler   RoomStateReconciler
 	AdminMXIDs   []id.UserID
 	Log          zerolog.Logger
 }
 
-func NewRoomsService(store ThreadStore, creator RoomCreator, adminInviter RoomAdminInviter, adminMXIDs []id.UserID, log zerolog.Logger) *RoomsService {
+func NewRoomsService(store ThreadStore, creator RoomCreator, adminInviter RoomAdminInviter, reconciler RoomStateReconciler, adminMXIDs []id.UserID, log zerolog.Logger) *RoomsService {
 	return &RoomsService{
 		Store:        store,
 		Creator:      creator,
 		AdminInviter: adminInviter,
+		Reconciler:   reconciler,
 		AdminMXIDs:   adminMXIDs,
 		Log:          log,
 	}
@@ -247,6 +374,7 @@ func (r *RoomsService) EnsureRoom(thread model.Thread) (id.RoomID, bool, error) 
 			if err := r.Store.Put(thread, roomID); err != nil {
 				return "", false, err
 			}
+			r.ensureRoomState(thread.ID, roomID)
 			r.ensureAdminsInvited(thread.ID, roomID)
 			return roomID, false, nil
 		}
@@ -267,8 +395,26 @@ func (r *RoomsService) EnsureRoom(thread model.Thread) (id.RoomID, bool, error) 
 		Str("room_id", roomID.String()).
 		Str("thread_id", thread.ID).
 		Msg("matrix room created")
+	r.ensureRoomState(thread.ID, roomID)
 	r.ensureAdminsInvited(thread.ID, roomID)
 	return roomID, true, nil
+}
+
+func (r *RoomsService) ensureRoomState(threadID string, roomID id.RoomID) {
+	if r == nil || r.Reconciler == nil || roomID == "" {
+		return
+	}
+	historyResult, powerResult, err := r.Reconciler.EnsureRoomState(roomID, r.AdminMXIDs)
+	log := r.Log.Debug().
+		Str("room_id", roomID.String()).
+		Str("thread_id", threadID).
+		Str("history_result", historyResult).
+		Str("power_result", powerResult)
+	if err != nil {
+		log.Err(err).Msg("matrix room state ensure failed")
+		return
+	}
+	log.Msg("matrix room state ensured")
 }
 
 func (r *RoomsService) ensureAdminsInvited(threadID string, roomID id.RoomID) {

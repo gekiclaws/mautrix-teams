@@ -51,9 +51,9 @@ func (br *DiscordBridge) runTeamsConsumerRoomSync(ctx context.Context, log zerol
 	consumer := consumerclient.NewClient(authClient.HTTP)
 	store := br.ensureTeamsThreadStore()
 	store.LoadAll()
-	creator := teamsbridge.NewIntentRoomCreator(br.Bot, &br.Config.Bridge)
 	adminMXIDs := br.resolveTeamsAdminInviteMXIDs(log)
-	rooms := teamsbridge.NewRoomsService(store, creator, teamsbridge.NewIntentAdminInviter(br.Bot), adminMXIDs, log)
+	creator := teamsbridge.NewIntentRoomCreator(br.Bot, &br.Config.Bridge, adminMXIDs)
+	rooms := teamsbridge.NewRoomsService(store, creator, teamsbridge.NewIntentAdminInviter(br.Bot), teamsbridge.NewIntentRoomStateReconciler(br.Bot), adminMXIDs, log)
 
 	for _, row := range br.DB.TeamsThread.GetAll() {
 		if row == nil || row.ThreadID == "" || row.RoomID == "" {
@@ -107,9 +107,9 @@ func (br *DiscordBridge) runTeamsConsumerMessageSync(ctx context.Context, log ze
 
 	store := br.ensureTeamsThreadStore()
 	store.LoadAll()
-	creator := teamsbridge.NewIntentRoomCreator(br.Bot, &br.Config.Bridge)
 	adminMXIDs := br.resolveTeamsAdminInviteMXIDs(log)
-	rooms := teamsbridge.NewRoomsService(store, creator, teamsbridge.NewIntentAdminInviter(br.Bot), adminMXIDs, log)
+	creator := teamsbridge.NewIntentRoomCreator(br.Bot, &br.Config.Bridge, adminMXIDs)
+	rooms := teamsbridge.NewRoomsService(store, creator, teamsbridge.NewIntentAdminInviter(br.Bot), teamsbridge.NewIntentRoomStateReconciler(br.Bot), adminMXIDs, log)
 	discoverer := &teamsbridge.TeamsThreadDiscoverer{
 		Lister: consumer,
 		Token:  state.SkypeToken,
