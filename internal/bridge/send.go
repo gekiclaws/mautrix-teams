@@ -20,6 +20,7 @@ type ThreadLookup interface {
 type SendIntentStore interface {
 	Insert(intent *database.TeamsSendIntent) error
 	UpdateStatus(clientMessageID string, status database.TeamsSendStatus) error
+	ClearIntentMXID(clientMessageID string) error
 }
 
 type MSSWriter func(ctx context.Context, status database.TeamsSendStatus, clientMessageID string, ts int64) error
@@ -42,7 +43,7 @@ func NewTeamsConsumerSender(client *client.Client, intents SendIntentStore, thre
 	}
 }
 
-func (s *TeamsConsumerSender) SendMatrixText(ctx context.Context, roomID id.RoomID, body string, eventID id.EventID, writer MSSWriter) error {
+func (s *TeamsConsumerSender) SendMatrixText(ctx context.Context, roomID id.RoomID, body string, eventID id.EventID, intentMXID id.UserID, writer MSSWriter) error {
 	if s == nil || s.Client == nil {
 		return errors.New("missing teams consumer client")
 	}
@@ -75,6 +76,7 @@ func (s *TeamsConsumerSender) SendMatrixText(ctx context.Context, roomID id.Room
 		Timestamp:       pendingTS,
 		Status:          database.TeamsSendStatusPending,
 		MXID:            eventID,
+		IntentMXID:      intentMXID,
 	}
 	if err := s.SendIntents.Insert(intent); err != nil {
 		return err
@@ -120,6 +122,11 @@ func (s *TeamsConsumerSender) SendMatrixText(ctx context.Context, roomID id.Room
 		if err := writer(ctx, newStatus, clientMessageID, updateTS); err != nil {
 			s.Log.Warn().Err(err).Str("event_id", eventID.String()).Msg("failed to write MSS metadata")
 		}
+	}
+	if clearErr := s.SendIntents.ClearIntentMXID(clientMessageID); clearErr != nil {
+		s.Log.Warn().Err(clearErr).
+			Str("client_message_id", clientMessageID).
+			Msg("failed to clear matrix intent mapping for MSS")
 	}
 
 	s.Log.Info().

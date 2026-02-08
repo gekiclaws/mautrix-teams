@@ -24,6 +24,10 @@ func TestUpgradesIncludeTeamsSendIntent(t *testing.T) {
 	if err := db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='teams_send_intent'").Scan(&name); err != nil {
 		t.Fatalf("teams_send_intent table missing: %v", err)
 	}
+	var intentMXIDCol string
+	if err := db.QueryRow("SELECT name FROM pragma_table_info('teams_send_intent') WHERE name='intent_mxid'").Scan(&intentMXIDCol); err != nil {
+		t.Fatalf("teams_send_intent.intent_mxid column missing: %v", err)
+	}
 	if err := db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='teams_message_map'").Scan(&name); err != nil {
 		t.Fatalf("teams_message_map table missing: %v", err)
 	}
