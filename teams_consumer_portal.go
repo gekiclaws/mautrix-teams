@@ -136,10 +136,10 @@ func (portal *TeamsConsumerPortal) handleMatrixMessage(sender *User, evt *event.
 	}
 
 	writer := func(ctx context.Context, status database.TeamsSendStatus, clientMessageID string, ts int64) error {
-		return portal.writeMSSMetadata(sender, evt, status, clientMessageID, ts)
+		return portal.writeMSSMetadata(evt, status, clientMessageID, ts)
 	}
 
-	err := portal.bridge.TeamsConsumerSender.SendMatrixText(context.Background(), portal.roomID, content.Body, evt.ID, writer)
+	err := portal.bridge.TeamsConsumerSender.SendMatrixText(context.Background(), portal.roomID, content.Body, evt.ID, portal.intentMXIDForMSS(sender), writer)
 	if err != nil {
 		portal.bridge.ZLog.Warn().Err(err).Str("event_id", evt.ID.String()).Msg("Teams consumer send failed")
 	}
@@ -172,46 +172,67 @@ func (portal *TeamsConsumerPortal) handleMatrixRedaction(sender *User, evt *even
 	}
 }
 
-func (portal *TeamsConsumerPortal) writeMSSMetadata(sender *User, evt *event.Event, status database.TeamsSendStatus, clientMessageID string, ts int64) error {
-	intent := portal.intentForMSS(sender)
+func (portal *TeamsConsumerPortal) writeMSSMetadata(evt *event.Event, status database.TeamsSendStatus, clientMessageID string, ts int64) error {
+	intent := portal.intentForMSS(clientMessageID)
 	if intent == nil {
 		return errors.New("missing matrix intent for MSS")
 	}
-	if evt.Content.Parsed == nil {
-		_ = evt.Content.ParseRaw(evt.Type)
-	}
-	content, ok := evt.Content.Parsed.(*event.MessageEventContent)
-	if !ok || content == nil {
-		return errors.New("missing message content")
-	}
-	edited := *content
-	edited.SetEdit(evt.ID)
-	edited.Body = content.Body
-	if content.Format != "" {
-		edited.FormattedBody = content.FormattedBody
+	if evt == nil || evt.ID == "" {
+		return errors.New("missing event for MSS status")
 	}
 
-	mss := map[string]any{
-		"status":            string(status),
-		"client_message_id": clientMessageID,
-		"ts":                ts,
-	}
-	extra := map[string]any{
-		"com.beeper.teams.mss": mss,
+	mappedStatus := event.MessageStatusPending
+	switch status {
+	case database.TeamsSendStatusAccepted:
+		mappedStatus = event.MessageStatusSuccess
+	case database.TeamsSendStatusFailed:
+		mappedStatus = event.MessageStatusRetriable
 	}
 
-	wrapped := event.Content{Parsed: &edited, Raw: extra}
-	_, err := intent.SendMessageEvent(portal.roomID, event.EventMessage, &wrapped)
+	network := "teams"
+	if portal != nil && portal.bridge != nil && portal.bridge.BeeperServiceName != "" {
+		network = portal.bridge.BeeperServiceName
+	}
+
+	content := event.BeeperMessageStatusEventContent{
+		Network: network,
+		RelatesTo: event.RelatesTo{
+			Type:    event.RelReference,
+			EventID: evt.ID,
+		},
+		Status: mappedStatus,
+	}
+	if mappedStatus == event.MessageStatusRetriable {
+		content.Reason = event.MessageStatusNetworkError
+		content.Message = "Failed to send message to Teams"
+	}
+
+	_, err := intent.SendMessageEvent(portal.roomID, event.BeeperMessageStatus, &content)
 	return err
 }
 
-func (portal *TeamsConsumerPortal) intentForMSS(sender *User) *appservice.IntentAPI {
+func (portal *TeamsConsumerPortal) intentMXIDForMSS(sender *User) id.UserID {
 	if sender == nil {
+		return ""
+	}
+	return sender.MXID
+}
+
+func (portal *TeamsConsumerPortal) intentForMSS(clientMessageID string) *appservice.IntentAPI {
+	if portal == nil {
 		return nil
 	}
-	dp := sender.GetIDoublePuppet()
-	if dp == nil || dp.CustomIntent() == nil {
-		return nil
+	fallback := portal.MainIntent()
+	if portal.bridge == nil || portal.bridge.DB == nil || portal.bridge.DB.TeamsSendIntent == nil {
+		return fallback
 	}
-	return dp.CustomIntent()
+	intentEntry := portal.bridge.DB.TeamsSendIntent.GetByClientMessageID(clientMessageID)
+	if intentEntry == nil || intentEntry.IntentMXID == "" {
+		return fallback
+	}
+	puppet := portal.bridge.GetPuppetByCustomMXID(intentEntry.IntentMXID)
+	if puppet == nil || puppet.CustomIntent() == nil {
+		return fallback
+	}
+	return puppet.CustomIntent()
 }

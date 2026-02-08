@@ -125,7 +125,7 @@ func runDevSend(args []string) error {
 		return nil
 	}
 
-	if err := sender.SendMatrixText(context.Background(), opts.RoomID, opts.Text, evt.ID, writer); err != nil {
+	if err := sender.SendMatrixText(context.Background(), opts.RoomID, opts.Text, evt.ID, "", writer); err != nil {
 		log.Warn().Err(err).Str("event_id", evt.ID.String()).Msg("dev-send teams send failed")
 		return err
 	}

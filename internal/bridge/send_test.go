@@ -28,6 +28,7 @@ type fakeSendIntentStore struct {
 	mu       sync.Mutex
 	inserted []*database.TeamsSendIntent
 	updates  map[string]database.TeamsSendStatus
+	cleared  []string
 }
 
 func (f *fakeSendIntentStore) Insert(intent *database.TeamsSendIntent) error {
@@ -44,6 +45,13 @@ func (f *fakeSendIntentStore) UpdateStatus(clientMessageID string, status databa
 		f.updates = make(map[string]database.TeamsSendStatus)
 	}
 	f.updates[clientMessageID] = status
+	return nil
+}
+
+func (f *fakeSendIntentStore) ClearIntentMXID(clientMessageID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.cleared = append(f.cleared, clientMessageID)
 	return nil
 }
 
@@ -65,7 +73,7 @@ func TestTeamsConsumerSenderSuccess(t *testing.T) {
 	}
 
 	sender := NewTeamsConsumerSender(consumer, store, fakeThreadLookup{threadID: "19:abc@thread.v2", ok: true}, "8:live:me", zerolog.Nop())
-	err := sender.SendMatrixText(context.Background(), "!room:example.org", "hello", "$event", writer)
+	err := sender.SendMatrixText(context.Background(), "!room:example.org", "hello", "$event", "@alice:example.org", writer)
 	if err != nil {
 		t.Fatalf("SendMatrixText failed: %v", err)
 	}
@@ -79,8 +87,14 @@ func TestTeamsConsumerSenderSuccess(t *testing.T) {
 	if !regexp.MustCompile(`^[0-9]+$`).MatchString(intent.ClientMessageID) {
 		t.Fatalf("client message id is not numeric: %q", intent.ClientMessageID)
 	}
+	if intent.IntentMXID != "@alice:example.org" {
+		t.Fatalf("expected intent mxid @alice:example.org, got %s", intent.IntentMXID)
+	}
 	if got := store.updates[intent.ClientMessageID]; got != database.TeamsSendStatusAccepted {
 		t.Fatalf("expected accepted status, got %s", got)
+	}
+	if len(store.cleared) != 1 || store.cleared[0] != intent.ClientMessageID {
+		t.Fatalf("expected cleared intent mapping for %s, got %v", intent.ClientMessageID, store.cleared)
 	}
 	if len(statuses) != 2 || statuses[0] != database.TeamsSendStatusPending || statuses[1] != database.TeamsSendStatusAccepted {
 		t.Fatalf("unexpected status sequence: %v", statuses)
@@ -105,7 +119,7 @@ func TestTeamsConsumerSenderFailure(t *testing.T) {
 	}
 
 	sender := NewTeamsConsumerSender(consumer, store, fakeThreadLookup{threadID: "19:abc@thread.v2", ok: true}, "8:live:me", zerolog.Nop())
-	err := sender.SendMatrixText(context.Background(), "!room:example.org", "hello", "$event", writer)
+	err := sender.SendMatrixText(context.Background(), "!room:example.org", "hello", "$event", "@alice:example.org", writer)
 	if err == nil {
 		t.Fatalf("expected error")
 	}
@@ -115,6 +129,9 @@ func TestTeamsConsumerSenderFailure(t *testing.T) {
 	intent := store.inserted[0]
 	if got := store.updates[intent.ClientMessageID]; got != database.TeamsSendStatusFailed {
 		t.Fatalf("expected failed status, got %s", got)
+	}
+	if len(store.cleared) != 1 || store.cleared[0] != intent.ClientMessageID {
+		t.Fatalf("expected cleared intent mapping for %s, got %v", intent.ClientMessageID, store.cleared)
 	}
 	if len(statuses) != 2 || statuses[0] != database.TeamsSendStatusPending || statuses[1] != database.TeamsSendStatusFailed {
 		t.Fatalf("unexpected status sequence: %v", statuses)

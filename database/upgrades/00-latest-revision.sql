@@ -1,4 +1,4 @@
--- v0 -> v32 (compatible with v19+): Latest revision
+-- v0 -> v34 (compatible with v19+): Latest revision
 
 CREATE TABLE guild (
     dcid       TEXT PRIMARY KEY,
@@ -80,13 +80,16 @@ CREATE TABLE teams_send_intent (
     client_message_id TEXT PRIMARY KEY,
     timestamp BIGINT NOT NULL,
     status TEXT NOT NULL,
-    mxid TEXT NOT NULL
+    mxid TEXT NOT NULL,
+    intent_mxid TEXT NOT NULL
 );
 
 CREATE TABLE teams_message_map (
     mxid TEXT PRIMARY KEY,
     thread_id TEXT NOT NULL,
-    teams_message_id TEXT NOT NULL
+    teams_message_id TEXT NOT NULL,
+    message_ts BIGINT,
+    sender_id TEXT
 );
 
 CREATE TABLE teams_reaction_map (
@@ -102,6 +105,13 @@ CREATE TABLE teams_reaction (
     user_mri TEXT NOT NULL,
     matrix_event_id TEXT NOT NULL,
     PRIMARY KEY (thread_id, teams_message_id, emotion_key, user_mri)
+);
+
+CREATE TABLE teams_consumption_horizon (
+    thread_id TEXT NOT NULL,
+    teams_user_id TEXT NOT NULL,
+    last_read_ts BIGINT NOT NULL,
+    PRIMARY KEY (thread_id, teams_user_id)
 );
 
 CREATE TABLE puppet (
@@ -220,5 +230,7 @@ CREATE TABLE discord_file (
 
     PRIMARY KEY (url, encrypted)
 );
+
+CREATE INDEX teams_message_map_thread_ts_idx ON teams_message_map (thread_id, message_ts);
 
 CREATE INDEX discord_file_mxc_idx ON discord_file (mxc);

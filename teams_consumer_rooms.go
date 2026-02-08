@@ -385,7 +385,7 @@ func (br *DiscordBridge) resolveTeamsAdminInviteMXIDs(log zerolog.Logger) []id.U
 		return adminMXIDs
 	}
 	br.teamsAdminInviteWarn.Do(func() {
-		log.Warn().Msg("no explicit admin mxids found in bridge.permissions, skipping teams room admin invites")
+		log.Warn().Msg("no explicit admin mxids found in bridge.permissions, skipping teams room admin membership reconciliation")
 	})
 	return nil
 }

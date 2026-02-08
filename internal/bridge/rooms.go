@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/rs/zerolog"
 	"maunium.net/go/mautrix"
@@ -41,16 +42,57 @@ func (i *IntentAdminInviter) EnsureInvited(roomID id.RoomID, userID id.UserID) (
 	if i == nil || i.Intent == nil {
 		return "", errors.New("missing bot intent")
 	}
-	if i.Intent.StateStore != nil {
-		if i.Intent.StateStore.IsInRoom(roomID, userID) {
-			return "already_joined", nil
+
+	initialMembership, err := i.getMembership(roomID, userID)
+	if err != nil {
+		return "", err
+	}
+	if initialMembership == event.MembershipJoin {
+		return "already_joined", nil
+	}
+
+	inviteResult := ""
+	switch initialMembership {
+	case event.MembershipInvite:
+		// Refresh invite state before forcing an explicit join as the admin user.
+		inviteResult, err = i.sendInvite(roomID, userID)
+		if err != nil {
+			return "", err
 		}
-		if i.Intent.StateStore.IsInvited(roomID, userID) {
-			return "already_invited", nil
+	default:
+		inviteResult, err = i.sendInvite(roomID, userID)
+		if err != nil {
+			return "", err
 		}
 	}
 
-	_, err := i.Intent.InviteUser(roomID, &mautrix.ReqInviteUser{UserID: userID})
+	joinResult, err := i.joinAsUser(roomID, userID)
+	if err != nil {
+		return joinResult, err
+	}
+
+	finalMembership, err := i.getMembership(roomID, userID)
+	if err != nil {
+		return joinResult, err
+	}
+	switch finalMembership {
+	case event.MembershipJoin:
+		if inviteResult == "already_joined" || joinResult == "already_joined" || joinResult == "" {
+			return "already_joined", nil
+		}
+		return "joined_after_reconcile", nil
+	}
+
+	return "join_pending", nil
+}
+
+func (i *IntentAdminInviter) sendInvite(roomID id.RoomID, userID id.UserID) (string, error) {
+	content := event.Content{
+		Parsed: &event.MemberEventContent{
+			Membership: event.MembershipInvite,
+		},
+	}
+	_, err := i.Intent.SendStateEvent(roomID, event.StateMember, userID.String(), &content)
 	if err == nil {
 		if i.Intent.StateStore != nil {
 			i.Intent.StateStore.SetMembership(roomID, userID, event.MembershipInvite)
@@ -61,7 +103,7 @@ func (i *IntentAdminInviter) EnsureInvited(roomID id.RoomID, userID id.UserID) (
 	var httpErr mautrix.HTTPError
 	if errors.As(err, &httpErr) && httpErr.RespError != nil {
 		lowerErr := strings.ToLower(httpErr.RespError.Err)
-		if strings.Contains(lowerErr, "already in the room") {
+		if strings.Contains(lowerErr, "already in the room") || strings.Contains(lowerErr, "is already joined") {
 			if i.Intent.StateStore != nil {
 				i.Intent.StateStore.SetMembership(roomID, userID, event.MembershipJoin)
 			}
@@ -76,6 +118,55 @@ func (i *IntentAdminInviter) EnsureInvited(roomID id.RoomID, userID id.UserID) (
 	}
 
 	return "", err
+}
+
+func (i *IntentAdminInviter) joinAsUser(roomID id.RoomID, userID id.UserID) (string, error) {
+	var resp mautrix.RespJoinRoom
+	urlPath := i.Intent.BuildURLWithQuery(mautrix.ClientURLPath{"v3", "rooms", roomID.String(), "join"}, map[string]string{
+		"user_id": userID.String(),
+	})
+	_, err := i.Intent.MakeRequest("POST", urlPath, nil, &resp)
+	if err == nil {
+		if i.Intent.StateStore != nil {
+			i.Intent.StateStore.SetMembership(resp.RoomID, userID, event.MembershipJoin)
+		}
+		return "joined", nil
+	}
+
+	var httpErr mautrix.HTTPError
+	if errors.As(err, &httpErr) && httpErr.RespError != nil {
+		lowerErr := strings.ToLower(httpErr.RespError.Err)
+		if strings.Contains(lowerErr, "already in the room") || strings.Contains(lowerErr, "already joined") {
+			if i.Intent.StateStore != nil {
+				i.Intent.StateStore.SetMembership(roomID, userID, event.MembershipJoin)
+			}
+			return "already_joined", nil
+		}
+	}
+
+	return "", err
+}
+
+func (i *IntentAdminInviter) getMembership(roomID id.RoomID, userID id.UserID) (event.Membership, error) {
+	if i.Intent.StateStore != nil {
+		if i.Intent.StateStore.IsInRoom(roomID, userID) {
+			return event.MembershipJoin, nil
+		}
+	}
+
+	var member event.MemberEventContent
+	err := i.Intent.StateEvent(roomID, event.StateMember, userID.String(), &member)
+	if err != nil {
+		if errors.Is(err, mautrix.MNotFound) {
+			return event.MembershipLeave, nil
+		}
+		return "", err
+	}
+
+	if i.Intent.StateStore != nil {
+		i.Intent.StateStore.SetMembership(roomID, userID, member.Membership)
+	}
+	return member.Membership, nil
 }
 
 func ResolveExplicitAdminMXIDs(permissions bridgeconfig.PermissionConfig) []id.UserID {
@@ -351,6 +442,9 @@ type RoomsService struct {
 	Reconciler   RoomStateReconciler
 	AdminMXIDs   []id.UserID
 	Log          zerolog.Logger
+
+	claimMu      sync.Mutex
+	threadClaims map[string]*sync.Mutex
 }
 
 func NewRoomsService(store ThreadStore, creator RoomCreator, adminInviter RoomAdminInviter, reconciler RoomStateReconciler, adminMXIDs []id.UserID, log zerolog.Logger) *RoomsService {
@@ -361,10 +455,18 @@ func NewRoomsService(store ThreadStore, creator RoomCreator, adminInviter RoomAd
 		Reconciler:   reconciler,
 		AdminMXIDs:   adminMXIDs,
 		Log:          log,
+		threadClaims: make(map[string]*sync.Mutex),
 	}
 }
 
 func (r *RoomsService) EnsureRoom(thread model.Thread) (id.RoomID, bool, error) {
+	if r == nil {
+		return "", false, errors.New("missing rooms service")
+	}
+	claim := r.claimThread(thread.ID)
+	claim.Lock()
+	defer claim.Unlock()
+
 	if r.Store != nil {
 		if roomID, ok := r.Store.Get(thread.ID); ok {
 			r.Log.Debug().
@@ -400,6 +502,18 @@ func (r *RoomsService) EnsureRoom(thread model.Thread) (id.RoomID, bool, error) 
 	return roomID, true, nil
 }
 
+func (r *RoomsService) claimThread(threadID string) *sync.Mutex {
+	r.claimMu.Lock()
+	defer r.claimMu.Unlock()
+	claim, ok := r.threadClaims[threadID]
+	if ok {
+		return claim
+	}
+	claim = &sync.Mutex{}
+	r.threadClaims[threadID] = claim
+	return claim
+}
+
 func (r *RoomsService) ensureRoomState(threadID string, roomID id.RoomID) {
 	if r == nil || r.Reconciler == nil || roomID == "" {
 		return
@@ -431,7 +545,16 @@ func (r *RoomsService) ensureAdminsInvited(threadID string, roomID id.RoomID) {
 			log.Err(err).Str("result", "invite_failed").Msg("matrix admin invite ensure failed")
 			continue
 		}
-		log.Str("result", result).Msg("matrix admin invite ensured")
+		if result == "already_joined" || result == "joined_after_reconcile" || result == "joined" {
+			log.Str("result", result).Msg("matrix admin membership ensured")
+			continue
+		}
+		r.Log.Warn().
+			Str("room_id", roomID.String()).
+			Str("thread_id", threadID).
+			Str("admin_mxid", adminMXID.String()).
+			Str("result", result).
+			Msg("matrix admin is not joined after membership reconciliation")
 	}
 }
 
