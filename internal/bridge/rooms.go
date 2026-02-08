@@ -54,7 +54,7 @@ func (i *IntentAdminInviter) EnsureInvited(roomID id.RoomID, userID id.UserID) (
 	inviteResult := ""
 	switch initialMembership {
 	case event.MembershipInvite:
-		// Retry invite for pending invites to recover from resync storms where auto-join is delayed.
+		// Refresh invite state before forcing an explicit join as the admin user.
 		inviteResult, err = i.sendInvite(roomID, userID)
 		if err != nil {
 			return "", err
@@ -64,36 +64,32 @@ func (i *IntentAdminInviter) EnsureInvited(roomID id.RoomID, userID id.UserID) (
 		if err != nil {
 			return "", err
 		}
+	}
+
+	joinResult, err := i.joinAsUser(roomID, userID)
+	if err != nil {
+		return joinResult, err
 	}
 
 	finalMembership, err := i.getMembership(roomID, userID)
 	if err != nil {
-		return inviteResult, err
+		return joinResult, err
 	}
 	switch finalMembership {
 	case event.MembershipJoin:
-		if inviteResult == "already_joined" || inviteResult == "" {
+		if inviteResult == "already_joined" || joinResult == "already_joined" || joinResult == "" {
 			return "already_joined", nil
 		}
-		return "joined_after_invite", nil
-	case event.MembershipInvite:
-		return "invite_pending", nil
-	default:
-		if inviteResult == "already_invited" || inviteResult == "invited" {
-			return "invite_pending", nil
-		}
+		return "joined_after_reconcile", nil
 	}
 
-	return inviteResult, nil
+	return "join_pending", nil
 }
 
 func (i *IntentAdminInviter) sendInvite(roomID id.RoomID, userID id.UserID) (string, error) {
 	content := event.Content{
 		Parsed: &event.MemberEventContent{
 			Membership: event.MembershipInvite,
-		},
-		Raw: map[string]interface{}{
-			"fi.mau.will_auto_accept": true,
 		},
 	}
 	_, err := i.Intent.SendStateEvent(roomID, event.StateMember, userID.String(), &content)
@@ -118,6 +114,33 @@ func (i *IntentAdminInviter) sendInvite(roomID id.RoomID, userID id.UserID) (str
 				i.Intent.StateStore.SetMembership(roomID, userID, event.MembershipInvite)
 			}
 			return "already_invited", nil
+		}
+	}
+
+	return "", err
+}
+
+func (i *IntentAdminInviter) joinAsUser(roomID id.RoomID, userID id.UserID) (string, error) {
+	var resp mautrix.RespJoinRoom
+	urlPath := i.Intent.BuildURLWithQuery(mautrix.ClientURLPath{"v3", "rooms", roomID.String(), "join"}, map[string]string{
+		"user_id": userID.String(),
+	})
+	_, err := i.Intent.MakeRequest("POST", urlPath, nil, &resp)
+	if err == nil {
+		if i.Intent.StateStore != nil {
+			i.Intent.StateStore.SetMembership(resp.RoomID, userID, event.MembershipJoin)
+		}
+		return "joined", nil
+	}
+
+	var httpErr mautrix.HTTPError
+	if errors.As(err, &httpErr) && httpErr.RespError != nil {
+		lowerErr := strings.ToLower(httpErr.RespError.Err)
+		if strings.Contains(lowerErr, "already in the room") || strings.Contains(lowerErr, "already joined") {
+			if i.Intent.StateStore != nil {
+				i.Intent.StateStore.SetMembership(roomID, userID, event.MembershipJoin)
+			}
+			return "already_joined", nil
 		}
 	}
 
@@ -522,7 +545,7 @@ func (r *RoomsService) ensureAdminsInvited(threadID string, roomID id.RoomID) {
 			log.Err(err).Str("result", "invite_failed").Msg("matrix admin invite ensure failed")
 			continue
 		}
-		if result == "already_joined" || result == "joined_after_invite" {
+		if result == "already_joined" || result == "joined_after_reconcile" || result == "joined" {
 			log.Str("result", result).Msg("matrix admin membership ensured")
 			continue
 		}
