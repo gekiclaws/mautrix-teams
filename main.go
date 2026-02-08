@@ -94,6 +94,7 @@ type DiscordBridge struct {
 	TeamsConsumerTyper   *teamsbridge.TeamsConsumerTyper
 	TeamsUnreadCycles    *teamsbridge.UnreadCycleTracker
 	TeamsConsumerReceipt *teamsbridge.TeamsConsumerReceiptSender
+	teamsAdminInviteWarn sync.Once
 }
 
 func (br *DiscordBridge) GetExampleConfig() string {

@@ -8,11 +8,13 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
+	"maunium.net/go/mautrix/id"
 
 	"go.mau.fi/mautrix-teams/database"
 	teamsbridge "go.mau.fi/mautrix-teams/internal/bridge"
 	"go.mau.fi/mautrix-teams/internal/teams/auth"
 	consumerclient "go.mau.fi/mautrix-teams/internal/teams/client"
+	"go.mau.fi/mautrix-teams/internal/teams/model"
 )
 
 func (br *DiscordBridge) startTeamsConsumerRoomSync() {
@@ -50,7 +52,25 @@ func (br *DiscordBridge) runTeamsConsumerRoomSync(ctx context.Context, log zerol
 	store := br.ensureTeamsThreadStore()
 	store.LoadAll()
 	creator := teamsbridge.NewIntentRoomCreator(br.Bot, &br.Config.Bridge)
-	rooms := teamsbridge.NewRoomsService(store, creator, log)
+	adminMXIDs := br.resolveTeamsAdminInviteMXIDs(log)
+	rooms := teamsbridge.NewRoomsService(store, creator, teamsbridge.NewIntentAdminInviter(br.Bot), adminMXIDs, log)
+
+	for _, row := range br.DB.TeamsThread.GetAll() {
+		if row == nil || row.ThreadID == "" || row.RoomID == "" {
+			continue
+		}
+		thread := model.Thread{ID: row.ThreadID}
+		if row.ConversationID != nil {
+			thread.ConversationID = *row.ConversationID
+		}
+		if _, _, err := rooms.EnsureRoom(thread); err != nil {
+			log.Warn().
+				Err(err).
+				Str("thread_id", row.ThreadID).
+				Str("room_id", row.RoomID.String()).
+				Msg("failed to ensure mapped teams room")
+		}
+	}
 
 	return teamsbridge.DiscoverAndEnsureRooms(ctx, state.SkypeToken, consumer, rooms, log)
 }
@@ -88,7 +108,8 @@ func (br *DiscordBridge) runTeamsConsumerMessageSync(ctx context.Context, log ze
 	store := br.ensureTeamsThreadStore()
 	store.LoadAll()
 	creator := teamsbridge.NewIntentRoomCreator(br.Bot, &br.Config.Bridge)
-	rooms := teamsbridge.NewRoomsService(store, creator, log)
+	adminMXIDs := br.resolveTeamsAdminInviteMXIDs(log)
+	rooms := teamsbridge.NewRoomsService(store, creator, teamsbridge.NewIntentAdminInviter(br.Bot), adminMXIDs, log)
 	discoverer := &teamsbridge.TeamsThreadDiscoverer{
 		Lister: consumer,
 		Token:  state.SkypeToken,
@@ -356,6 +377,17 @@ func (br *DiscordBridge) runTeamsConsumerMessageSync(ctx context.Context, log ze
 		case <-timer.C:
 		}
 	}
+}
+
+func (br *DiscordBridge) resolveTeamsAdminInviteMXIDs(log zerolog.Logger) []id.UserID {
+	adminMXIDs := teamsbridge.ResolveExplicitAdminMXIDs(br.Config.Bridge.Permissions)
+	if len(adminMXIDs) > 0 {
+		return adminMXIDs
+	}
+	br.teamsAdminInviteWarn.Do(func() {
+		log.Warn().Msg("no explicit admin mxids found in bridge.permissions, skipping teams room admin invites")
+	})
+	return nil
 }
 
 func (br *DiscordBridge) startTeamsConsumerSender() {

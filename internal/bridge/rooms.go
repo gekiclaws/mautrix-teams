@@ -3,6 +3,8 @@ package teamsbridge
 import (
 	"context"
 	"errors"
+	"sort"
+	"strings"
 
 	"github.com/rs/zerolog"
 	"maunium.net/go/mautrix"
@@ -16,6 +18,84 @@ import (
 
 type RoomCreator interface {
 	CreateRoom(thread model.Thread) (id.RoomID, error)
+}
+
+type RoomAdminInviter interface {
+	EnsureInvited(roomID id.RoomID, userID id.UserID) (string, error)
+}
+
+type IntentAdminInviter struct {
+	Intent *appservice.IntentAPI
+}
+
+func NewIntentAdminInviter(intent *appservice.IntentAPI) *IntentAdminInviter {
+	return &IntentAdminInviter{Intent: intent}
+}
+
+func (i *IntentAdminInviter) EnsureInvited(roomID id.RoomID, userID id.UserID) (string, error) {
+	if i == nil || i.Intent == nil {
+		return "", errors.New("missing bot intent")
+	}
+	if i.Intent.StateStore != nil {
+		if i.Intent.StateStore.IsInRoom(roomID, userID) {
+			return "already_joined", nil
+		}
+		if i.Intent.StateStore.IsInvited(roomID, userID) {
+			return "already_invited", nil
+		}
+	}
+
+	_, err := i.Intent.InviteUser(roomID, &mautrix.ReqInviteUser{UserID: userID})
+	if err == nil {
+		if i.Intent.StateStore != nil {
+			i.Intent.StateStore.SetMembership(roomID, userID, event.MembershipInvite)
+		}
+		return "invited", nil
+	}
+
+	var httpErr mautrix.HTTPError
+	if errors.As(err, &httpErr) && httpErr.RespError != nil {
+		lowerErr := strings.ToLower(httpErr.RespError.Err)
+		if strings.Contains(lowerErr, "already in the room") {
+			if i.Intent.StateStore != nil {
+				i.Intent.StateStore.SetMembership(roomID, userID, event.MembershipJoin)
+			}
+			return "already_joined", nil
+		}
+		if strings.Contains(lowerErr, "already invited") || strings.Contains(lowerErr, "is invited") {
+			if i.Intent.StateStore != nil {
+				i.Intent.StateStore.SetMembership(roomID, userID, event.MembershipInvite)
+			}
+			return "already_invited", nil
+		}
+	}
+
+	return "", err
+}
+
+func ResolveExplicitAdminMXIDs(permissions bridgeconfig.PermissionConfig) []id.UserID {
+	if len(permissions) == 0 {
+		return nil
+	}
+	mxids := make([]id.UserID, 0, len(permissions))
+	for rawKey, level := range permissions {
+		if level < bridgeconfig.PermissionLevelAdmin {
+			continue
+		}
+		key := strings.TrimSpace(rawKey)
+		if !strings.HasPrefix(key, "@") {
+			continue
+		}
+		mxid := id.UserID(key)
+		if _, _, err := mxid.Parse(); err != nil {
+			continue
+		}
+		mxids = append(mxids, mxid)
+	}
+	sort.Slice(mxids, func(i, j int) bool {
+		return mxids[i] < mxids[j]
+	})
+	return mxids
 }
 
 type ClientRoomCreator struct {
@@ -140,16 +220,20 @@ func encryptionEventContent(cfg bridgeconfig.EncryptionConfig) *event.Encryption
 }
 
 type RoomsService struct {
-	Store   ThreadStore
-	Creator RoomCreator
-	Log     zerolog.Logger
+	Store        ThreadStore
+	Creator      RoomCreator
+	AdminInviter RoomAdminInviter
+	AdminMXIDs   []id.UserID
+	Log          zerolog.Logger
 }
 
-func NewRoomsService(store ThreadStore, creator RoomCreator, log zerolog.Logger) *RoomsService {
+func NewRoomsService(store ThreadStore, creator RoomCreator, adminInviter RoomAdminInviter, adminMXIDs []id.UserID, log zerolog.Logger) *RoomsService {
 	return &RoomsService{
-		Store:   store,
-		Creator: creator,
-		Log:     log,
+		Store:        store,
+		Creator:      creator,
+		AdminInviter: adminInviter,
+		AdminMXIDs:   adminMXIDs,
+		Log:          log,
 	}
 }
 
@@ -163,6 +247,7 @@ func (r *RoomsService) EnsureRoom(thread model.Thread) (id.RoomID, bool, error) 
 			if err := r.Store.Put(thread, roomID); err != nil {
 				return "", false, err
 			}
+			r.ensureAdminsInvited(thread.ID, roomID)
 			return roomID, false, nil
 		}
 	}
@@ -182,7 +267,26 @@ func (r *RoomsService) EnsureRoom(thread model.Thread) (id.RoomID, bool, error) 
 		Str("room_id", roomID.String()).
 		Str("thread_id", thread.ID).
 		Msg("matrix room created")
+	r.ensureAdminsInvited(thread.ID, roomID)
 	return roomID, true, nil
+}
+
+func (r *RoomsService) ensureAdminsInvited(threadID string, roomID id.RoomID) {
+	if r == nil || r.AdminInviter == nil || len(r.AdminMXIDs) == 0 || roomID == "" {
+		return
+	}
+	for _, adminMXID := range r.AdminMXIDs {
+		result, err := r.AdminInviter.EnsureInvited(roomID, adminMXID)
+		log := r.Log.Debug().
+			Str("room_id", roomID.String()).
+			Str("thread_id", threadID).
+			Str("admin_mxid", adminMXID.String())
+		if err != nil {
+			log.Err(err).Str("result", "invite_failed").Msg("matrix admin invite ensure failed")
+			continue
+		}
+		log.Str("result", result).Msg("matrix admin invite ensured")
+	}
 }
 
 type ConversationLister interface {
