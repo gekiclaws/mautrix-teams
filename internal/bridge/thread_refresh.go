@@ -36,16 +36,16 @@ func RefreshAndRegisterThreads(ctx context.Context, discoverer *TeamsThreadDisco
 
 	registrations := make([]ThreadRegistration, 0, len(threads))
 	for _, thread := range threads {
-		if _, ok := store.Get(thread.ID); ok {
-			continue
-		}
-		roomID, _, err := rooms.EnsureRoom(thread)
+		roomID, created, err := rooms.EnsureRoom(thread)
 		if err != nil {
 			log.Error().
 				Err(err).
 				Str("thread_id", thread.ID).
 				Msg("failed to ensure room for discovered thread")
 			return discovered, nil, err
+		}
+		if !created {
+			continue
 		}
 		registrations = append(registrations, ThreadRegistration{
 			Thread: thread,

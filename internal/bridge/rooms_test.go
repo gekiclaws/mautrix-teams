@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/rs/zerolog"
 	"maunium.net/go/mautrix/bridge/bridgeconfig"
@@ -30,11 +33,15 @@ func (s *fakeStore) Put(thread model.Thread, roomID id.RoomID) error {
 
 type fakeCreator struct {
 	roomID id.RoomID
-	calls  int
+	calls  atomic.Int32
+	waitCh <-chan struct{}
 }
 
 func (c *fakeCreator) CreateRoom(thread model.Thread) (id.RoomID, error) {
-	c.calls++
+	c.calls.Add(1)
+	if c.waitCh != nil {
+		<-c.waitCh
+	}
 	return c.roomID, nil
 }
 
@@ -99,7 +106,7 @@ func TestEnsureRoomIdempotent(t *testing.T) {
 	if roomID != "!room:example.org" {
 		t.Fatalf("unexpected room ID: %s", roomID)
 	}
-	if creator.calls != 0 {
+	if creator.calls.Load() != 0 {
 		t.Fatalf("expected creator not to be called")
 	}
 	if len(inviter.calls) != 1 {
@@ -134,7 +141,7 @@ func TestEnsureRoomCreates(t *testing.T) {
 	if roomID != "!created:example.org" {
 		t.Fatalf("unexpected room ID: %s", roomID)
 	}
-	if creator.calls != 1 {
+	if creator.calls.Load() != 1 {
 		t.Fatalf("expected creator to be called once")
 	}
 	if len(inviter.calls) != 1 {
@@ -212,8 +219,8 @@ func TestDiscoverAndEnsureRoomsSkipsMissingID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DiscoverAndEnsureRooms failed: %v", err)
 	}
-	if creator.calls != 1 {
-		t.Fatalf("expected creator to be called once, got %d", creator.calls)
+	if creator.calls.Load() != 1 {
+		t.Fatalf("expected creator to be called once, got %d", creator.calls.Load())
 	}
 	if _, ok := store.rooms["thread-3"]; !ok {
 		t.Fatalf("expected store to contain thread-3")
@@ -315,8 +322,8 @@ func TestRefreshAndRegisterThreadsRegistersOnlyNew(t *testing.T) {
 	if discovered != 2 {
 		t.Fatalf("unexpected discovered count: %d", discovered)
 	}
-	if creator.calls != 1 {
-		t.Fatalf("expected creator to be called once, got %d", creator.calls)
+	if creator.calls.Load() != 1 {
+		t.Fatalf("expected creator to be called once, got %d", creator.calls.Load())
 	}
 	if len(regs) != 1 {
 		t.Fatalf("expected 1 registration, got %d", len(regs))
@@ -327,8 +334,8 @@ func TestRefreshAndRegisterThreadsRegistersOnlyNew(t *testing.T) {
 	if regs[0].RoomID != "!created:example.org" {
 		t.Fatalf("unexpected room id: %q", regs[0].RoomID)
 	}
-	if len(inviter.calls) != 1 {
-		t.Fatalf("expected one admin invite ensure call, got %d", len(inviter.calls))
+	if len(inviter.calls) != 2 {
+		t.Fatalf("expected two admin invite ensure calls, got %d", len(inviter.calls))
 	}
 }
 
@@ -358,11 +365,14 @@ func TestRefreshAndRegisterThreadsNoNewThreadsNoCreates(t *testing.T) {
 	if discovered != 2 {
 		t.Fatalf("unexpected discovered count: %d", discovered)
 	}
-	if creator.calls != 0 {
-		t.Fatalf("expected creator to not be called, got %d", creator.calls)
+	if creator.calls.Load() != 0 {
+		t.Fatalf("expected creator to not be called, got %d", creator.calls.Load())
 	}
 	if len(regs) != 0 {
 		t.Fatalf("expected 0 registrations, got %d", len(regs))
+	}
+	if len(inviter.calls) != 2 {
+		t.Fatalf("expected two admin invite ensure calls, got %d", len(inviter.calls))
 	}
 }
 
@@ -379,6 +389,65 @@ func TestResolveExplicitAdminMXIDs(t *testing.T) {
 	expected := []id.UserID{"@admin:example.org", "@ops:example.org"}
 	if !reflect.DeepEqual(admins, expected) {
 		t.Fatalf("unexpected admins: got %v, want %v", admins, expected)
+	}
+}
+
+func TestEnsureRoomConcurrentCreateDedupes(t *testing.T) {
+	store := &fakeStore{rooms: map[string]id.RoomID{}}
+	createGate := make(chan struct{})
+	creator := &fakeCreator{roomID: "!created:example.org", waitCh: createGate}
+	rooms := NewRoomsService(store, creator, &fakeAdminInviter{}, &fakeRoomStateReconciler{}, nil, zerolog.Nop())
+
+	const workers = 8
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(workers)
+
+	type result struct {
+		roomID  id.RoomID
+		created bool
+		err     error
+	}
+	results := make(chan result, workers)
+	for range workers {
+		go func() {
+			defer wg.Done()
+			<-start
+			roomID, created, err := rooms.EnsureRoom(model.Thread{ID: "thread-race"})
+			results <- result{roomID: roomID, created: created, err: err}
+		}()
+	}
+
+	close(start)
+	deadline := time.Now().Add(2 * time.Second)
+	for creator.calls.Load() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for create call")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	close(createGate)
+	wg.Wait()
+	close(results)
+
+	if creator.calls.Load() != 1 {
+		t.Fatalf("expected one room create call, got %d", creator.calls.Load())
+	}
+
+	createdCount := 0
+	for res := range results {
+		if res.err != nil {
+			t.Fatalf("EnsureRoom returned error: %v", res.err)
+		}
+		if res.roomID != "!created:example.org" {
+			t.Fatalf("unexpected room ID: %s", res.roomID)
+		}
+		if res.created {
+			createdCount++
+		}
+	}
+	if createdCount != 1 {
+		t.Fatalf("expected exactly one created=true result, got %d", createdCount)
 	}
 }
 

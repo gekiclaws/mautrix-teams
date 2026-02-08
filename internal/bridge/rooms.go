@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/rs/zerolog"
 	"maunium.net/go/mautrix"
@@ -351,6 +352,9 @@ type RoomsService struct {
 	Reconciler   RoomStateReconciler
 	AdminMXIDs   []id.UserID
 	Log          zerolog.Logger
+
+	claimMu      sync.Mutex
+	threadClaims map[string]*sync.Mutex
 }
 
 func NewRoomsService(store ThreadStore, creator RoomCreator, adminInviter RoomAdminInviter, reconciler RoomStateReconciler, adminMXIDs []id.UserID, log zerolog.Logger) *RoomsService {
@@ -361,10 +365,18 @@ func NewRoomsService(store ThreadStore, creator RoomCreator, adminInviter RoomAd
 		Reconciler:   reconciler,
 		AdminMXIDs:   adminMXIDs,
 		Log:          log,
+		threadClaims: make(map[string]*sync.Mutex),
 	}
 }
 
 func (r *RoomsService) EnsureRoom(thread model.Thread) (id.RoomID, bool, error) {
+	if r == nil {
+		return "", false, errors.New("missing rooms service")
+	}
+	claim := r.claimThread(thread.ID)
+	claim.Lock()
+	defer claim.Unlock()
+
 	if r.Store != nil {
 		if roomID, ok := r.Store.Get(thread.ID); ok {
 			r.Log.Debug().
@@ -398,6 +410,18 @@ func (r *RoomsService) EnsureRoom(thread model.Thread) (id.RoomID, bool, error) 
 	r.ensureRoomState(thread.ID, roomID)
 	r.ensureAdminsInvited(thread.ID, roomID)
 	return roomID, true, nil
+}
+
+func (r *RoomsService) claimThread(threadID string) *sync.Mutex {
+	r.claimMu.Lock()
+	defer r.claimMu.Unlock()
+	claim, ok := r.threadClaims[threadID]
+	if ok {
+		return claim
+	}
+	claim = &sync.Mutex{}
+	r.threadClaims[threadID] = claim
+	return claim
 }
 
 func (r *RoomsService) ensureRoomState(threadID string, roomID id.RoomID) {
