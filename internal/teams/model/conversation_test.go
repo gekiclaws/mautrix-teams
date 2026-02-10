@@ -112,3 +112,57 @@ func TestNormalizeBotAugmentedOneToOneStillUsesHumanName(t *testing.T) {
 		t.Fatalf("unexpected room name: %q", thread.RoomName)
 	}
 }
+
+func TestNormalizeOneToOneSkipsSelfGhostDisplayName(t *testing.T) {
+	conv := RemoteConversation{
+		ID: "@oneToOne.skype",
+		ThreadProperties: ThreadProperties{
+			OriginalThreadID:  "thread-ghost-dm",
+			ProductThreadType: "OneToOneChat",
+		},
+		Members: []ConversationMember{
+			{ID: "8:live:self", DisplayName: "Me", IsSelf: true},
+			{ID: "28:teamsbot", DisplayName: "Teams Bot"},
+			{ID: "29:self-ghost", DisplayName: "Me"},
+			{ID: "29:remote-ghost", DisplayName: "Alex"},
+		},
+	}
+
+	thread, ok := conv.NormalizeForSelf("8:live:self")
+	if !ok {
+		t.Fatalf("expected Normalize to succeed")
+	}
+	if !thread.IsOneToOne {
+		t.Fatalf("expected IsOneToOne to be true")
+	}
+	if thread.RoomName != "Alex" {
+		t.Fatalf("unexpected room name: %q", thread.RoomName)
+	}
+}
+
+func TestNormalizeGroupChatInferenceHandlesSelfGhostPair(t *testing.T) {
+	conv := RemoteConversation{
+		ID: "19:thread@thread.v2",
+		ThreadProperties: ThreadProperties{
+			OriginalThreadID:  "thread-ghost-inferred",
+			ProductThreadType: "GroupChat",
+		},
+		Members: []ConversationMember{
+			{ID: "8:live:self", DisplayName: "Me", IsSelf: true},
+			{ID: "28:teamsbot", DisplayName: "Teams Bot"},
+			{ID: "29:self-ghost", DisplayName: "Me"},
+			{ID: "29:remote-ghost", DisplayName: "Alex"},
+		},
+	}
+
+	thread, ok := conv.NormalizeForSelf("8:live:self")
+	if !ok {
+		t.Fatalf("expected Normalize to succeed")
+	}
+	if !thread.IsOneToOne {
+		t.Fatalf("expected bot+ghost augmented chat to be treated as one-to-one")
+	}
+	if thread.RoomName != "Alex" {
+		t.Fatalf("unexpected room name: %q", thread.RoomName)
+	}
+}
