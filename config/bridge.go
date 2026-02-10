@@ -22,8 +22,6 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/bwmarrin/discordgo"
-
 	"maunium.net/go/mautrix/bridge/bridgeconfig"
 )
 
@@ -55,7 +53,6 @@ type BridgeConfig struct {
 	FederateRooms               bool `yaml:"federate_rooms"`
 	PrefixWebhookMessages       bool `yaml:"prefix_webhook_messages"`
 	EnableWebhookAvatars        bool `yaml:"enable_webhook_avatars"`
-	UseDiscordCDNUpload         bool `yaml:"use_discord_cdn_upload"`
 
 	Proxy string `yaml:"proxy"`
 
@@ -199,15 +196,21 @@ func (bc BridgeConfig) FormatUsername(userID string) string {
 }
 
 type DisplaynameParams struct {
-	*discordgo.User
+	*DisplaynameUser
 	Webhook     bool
 	Application bool
 }
 
-func (bc BridgeConfig) FormatDisplayname(user *discordgo.User, webhook, application bool) string {
+type DisplaynameUser struct {
+	Username      string
+	Discriminator string
+	Bot           bool
+}
+
+func (bc BridgeConfig) FormatDisplayname(user *DisplaynameUser, webhook, application bool) string {
 	var buffer strings.Builder
 	_ = bc.displaynameTemplate.Execute(&buffer, &DisplaynameParams{
-		User:        user,
+		DisplaynameUser: user,
 		Webhook:     webhook,
 		Application: application,
 	})
@@ -219,7 +222,7 @@ type ChannelNameParams struct {
 	ParentName string
 	GuildName  string
 	NSFW       bool
-	Type       discordgo.ChannelType
+	Type       int32
 }
 
 func (bc BridgeConfig) FormatChannelName(params ChannelNameParams) string {

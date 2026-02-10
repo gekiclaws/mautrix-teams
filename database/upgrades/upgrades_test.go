@@ -40,4 +40,12 @@ func TestUpgradesIncludeTeamsSendIntent(t *testing.T) {
 	if err := db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='teams_consumption_horizon'").Scan(&name); err != nil {
 		t.Fatalf("teams_consumption_horizon table missing: %v", err)
 	}
+	var remoteIDCol string
+	if err := db.QueryRow("SELECT name FROM pragma_table_info('user') WHERE name='remote_id'").Scan(&remoteIDCol); err != nil {
+		t.Fatalf("user.remote_id column missing: %v", err)
+	}
+	var authTokenCol string
+	if err := db.QueryRow("SELECT name FROM pragma_table_info('user') WHERE name='auth_token'").Scan(&authTokenCol); err != nil {
+		t.Fatalf("user.auth_token column missing: %v", err)
+	}
 }

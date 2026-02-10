@@ -1,4 +1,4 @@
--- v0 -> v34 (compatible with v19+): Latest revision
+-- v0 -> v35 (compatible with v19+): Latest revision
 
 CREATE TABLE guild (
     dcid       TEXT PRIMARY KEY,
@@ -139,9 +139,9 @@ CREATE TABLE puppet (
 
 CREATE TABLE "user" (
     mxid TEXT PRIMARY KEY,
-    dcid TEXT UNIQUE,
+    remote_id TEXT UNIQUE,
 
-    discord_token   TEXT,
+    auth_token      TEXT,
     management_room TEXT,
     space_room      TEXT,
     dm_space_room   TEXT,

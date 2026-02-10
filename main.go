@@ -18,12 +18,9 @@ package main
 
 import (
 	_ "embed"
-	"net/http"
 	"sync"
 
 	"go.mau.fi/util/configupgrade"
-	"go.mau.fi/util/exsync"
-	"golang.org/x/sync/semaphore"
 	"maunium.net/go/mautrix/bridge"
 	"maunium.net/go/mautrix/bridge/commands"
 	"maunium.net/go/mautrix/event"
@@ -45,14 +42,11 @@ var (
 //go:embed example-config.yaml
 var ExampleConfig string
 
-type DiscordBridge struct {
+type TeamsBridge struct {
 	bridge.Bridge
 
 	Config *config.Config
 	DB     *database.Database
-
-	DMA          *DirectMediaAPI
-	provisioning *ProvisioningAPI
 
 	usersByMXID map[id.UserID]*User
 	usersByID   map[string]*User
@@ -60,26 +54,6 @@ type DiscordBridge struct {
 
 	managementRooms     map[id.RoomID]*User
 	managementRoomsLock sync.Mutex
-
-	portalsByMXID map[id.RoomID]*Portal
-	portalsByID   map[database.PortalKey]*Portal
-	portalsLock   sync.Mutex
-
-	threadsByID                 map[string]*Thread
-	threadsByRootMXID           map[id.EventID]*Thread
-	threadsByCreationNoticeMXID map[id.EventID]*Thread
-	threadsLock                 sync.Mutex
-
-	guildsByMXID map[id.RoomID]*Guild
-	guildsByID   map[string]*Guild
-	guildsLock   sync.Mutex
-
-	puppets             map[string]*Puppet
-	puppetsByCustomMXID map[id.UserID]*Puppet
-	puppetsLock         sync.Mutex
-
-	attachmentTransfers         *exsync.Map[attachmentKey, *exsync.ReturnableOnce[*database.File]]
-	parallelAttachmentSemaphore *semaphore.Weighted
 
 	TeamsThreadStore     *teamsbridge.TeamsThreadStore
 	TeamsConsumerSender  *teamsbridge.TeamsConsumerSender
@@ -90,11 +64,11 @@ type DiscordBridge struct {
 	teamsAdminInviteWarn sync.Once
 }
 
-func (br *DiscordBridge) GetExampleConfig() string {
+func (br *TeamsBridge) GetExampleConfig() string {
 	return ExampleConfig
 }
 
-func (br *DiscordBridge) GetConfigPtr() interface{} {
+func (br *TeamsBridge) GetConfigPtr() interface{} {
 	br.Config = &config.Config{
 		BaseConfig: &br.Bridge.Config,
 	}
@@ -102,45 +76,25 @@ func (br *DiscordBridge) GetConfigPtr() interface{} {
 	return br.Config
 }
 
-func (br *DiscordBridge) Init() {
+func (br *TeamsBridge) Init() {
 	br.CommandProcessor = commands.NewProcessor(&br.Bridge)
-	br.RegisterCommands()
 	br.EventProcessor.On(event.StateTombstone, br.HandleTombstone)
 	br.EventProcessor.On(event.EventReaction, br.HandleTeamsConsumerReaction)
 
-	matrixHTMLParser.PillConverter = br.pillConverter
-
 	br.DB = database.New(br.Bridge.DB, br.Log.Sub("Database"))
-	discordLog = br.ZLog.With().Str("component", "discordgo").Logger()
 }
 
-func (br *DiscordBridge) Start() {
-	if br.Config.Bridge.Provisioning.SharedSecret != "disable" {
-		br.provisioning = newProvisioningAPI(br)
-	}
-	if br.Config.Bridge.PublicAddress != "" {
-		br.AS.Router.HandleFunc("/mautrix-discord/avatar/{server}/{mediaID}/{checksum}", br.serveMediaProxy).Methods(http.MethodGet)
-	}
-	br.DMA = newDirectMediaAPI(br)
+func (br *TeamsBridge) Start() {
 	br.WaitWebsocketConnected()
-	go br.startUsers()
 	br.startTeamsConsumerRoomSync()
 	br.startTeamsConsumerMessageSync()
 	br.startTeamsConsumerSender()
 }
 
-func (br *DiscordBridge) Stop() {
-	for _, user := range br.usersByMXID {
-		if user.Session == nil {
-			continue
-		}
-
-		br.Log.Debugln("Disconnecting", user.MXID)
-		user.Session.Close()
-	}
+func (br *TeamsBridge) Stop() {
 }
 
-func (br *DiscordBridge) GetIPortal(mxid id.RoomID) bridge.Portal {
+func (br *TeamsBridge) GetIPortal(mxid id.RoomID) bridge.Portal {
 	p := br.GetPortalByMXID(mxid)
 	if p == nil {
 		if br.TeamsConsumerSender == nil || br.TeamsThreadStore == nil {
@@ -154,7 +108,7 @@ func (br *DiscordBridge) GetIPortal(mxid id.RoomID) bridge.Portal {
 	return p
 }
 
-func (br *DiscordBridge) GetIUser(mxid id.UserID, create bool) bridge.User {
+func (br *TeamsBridge) GetIUser(mxid id.UserID, create bool) bridge.User {
 	p := br.GetUserByMXID(mxid)
 	if p == nil {
 		return nil
@@ -162,12 +116,12 @@ func (br *DiscordBridge) GetIUser(mxid id.UserID, create bool) bridge.User {
 	return p
 }
 
-func (br *DiscordBridge) IsGhost(mxid id.UserID) bool {
+func (br *TeamsBridge) IsGhost(mxid id.UserID) bool {
 	_, isGhost := br.ParsePuppetMXID(mxid)
 	return isGhost
 }
 
-func (br *DiscordBridge) GetIGhost(mxid id.UserID) bridge.Ghost {
+func (br *TeamsBridge) GetIGhost(mxid id.UserID) bridge.Ghost {
 	p := br.GetPuppetByMXID(mxid)
 	if p == nil {
 		return nil
@@ -175,32 +129,16 @@ func (br *DiscordBridge) GetIGhost(mxid id.UserID) bridge.Ghost {
 	return p
 }
 
-func (br *DiscordBridge) CreatePrivatePortal(id id.RoomID, user bridge.User, ghost bridge.Ghost) {
+func (br *TeamsBridge) CreatePrivatePortal(id id.RoomID, user bridge.User, ghost bridge.Ghost) {
 	//TODO implement
 }
 
 func main() {
-	br := &DiscordBridge{
+	br := &TeamsBridge{
 		usersByMXID: make(map[id.UserID]*User),
 		usersByID:   make(map[string]*User),
 
 		managementRooms: make(map[id.RoomID]*User),
-
-		portalsByMXID: make(map[id.RoomID]*Portal),
-		portalsByID:   make(map[database.PortalKey]*Portal),
-
-		threadsByID:                 make(map[string]*Thread),
-		threadsByRootMXID:           make(map[id.EventID]*Thread),
-		threadsByCreationNoticeMXID: make(map[id.EventID]*Thread),
-
-		guildsByID:   make(map[string]*Guild),
-		guildsByMXID: make(map[id.RoomID]*Guild),
-
-		puppets:             make(map[string]*Puppet),
-		puppetsByCustomMXID: make(map[id.UserID]*Puppet),
-
-		attachmentTransfers:         exsync.NewMap[attachmentKey, *exsync.ReturnableOnce[*database.File]](),
-		parallelAttachmentSemaphore: semaphore.NewWeighted(3),
 	}
 	br.Bridge = bridge.Bridge{
 		Name:              "mautrix-teams",

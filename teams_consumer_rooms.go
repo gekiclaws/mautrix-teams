@@ -17,7 +17,7 @@ import (
 	"go.mau.fi/mautrix-teams/internal/teams/model"
 )
 
-func (br *DiscordBridge) startTeamsConsumerRoomSync() {
+func (br *TeamsBridge) startTeamsConsumerRoomSync() {
 	// All Teams → Matrix ingest begins here for the bridge process.
 	go func() {
 		br.WaitWebsocketConnected()
@@ -32,7 +32,7 @@ func (br *DiscordBridge) startTeamsConsumerRoomSync() {
 	}()
 }
 
-func (br *DiscordBridge) runTeamsConsumerRoomSync(ctx context.Context, log zerolog.Logger) error {
+func (br *TeamsBridge) runTeamsConsumerRoomSync(ctx context.Context, log zerolog.Logger) error {
 	if br.ConfigPath == "" {
 		return errors.New("missing config path")
 	}
@@ -75,7 +75,7 @@ func (br *DiscordBridge) runTeamsConsumerRoomSync(ctx context.Context, log zerol
 	return teamsbridge.DiscoverAndEnsureRooms(ctx, state.SkypeToken, consumer, rooms, log)
 }
 
-func (br *DiscordBridge) startTeamsConsumerMessageSync() {
+func (br *TeamsBridge) startTeamsConsumerMessageSync() {
 	go func() {
 		br.WaitWebsocketConnected()
 		log := br.ZLog.With().Str("component", "teams-consumer-sync").Logger()
@@ -85,7 +85,7 @@ func (br *DiscordBridge) startTeamsConsumerMessageSync() {
 	}()
 }
 
-func (br *DiscordBridge) runTeamsConsumerMessageSync(ctx context.Context, log zerolog.Logger) error {
+func (br *TeamsBridge) runTeamsConsumerMessageSync(ctx context.Context, log zerolog.Logger) error {
 	if br.ConfigPath == "" {
 		return errors.New("missing config path")
 	}
@@ -379,7 +379,7 @@ func (br *DiscordBridge) runTeamsConsumerMessageSync(ctx context.Context, log ze
 	}
 }
 
-func (br *DiscordBridge) resolveTeamsAdminInviteMXIDs(log zerolog.Logger) []id.UserID {
+func (br *TeamsBridge) resolveTeamsAdminInviteMXIDs(log zerolog.Logger) []id.UserID {
 	adminMXIDs := teamsbridge.ResolveExplicitAdminMXIDs(br.Config.Bridge.Permissions)
 	if len(adminMXIDs) > 0 {
 		return adminMXIDs
@@ -390,14 +390,14 @@ func (br *DiscordBridge) resolveTeamsAdminInviteMXIDs(log zerolog.Logger) []id.U
 	return nil
 }
 
-func (br *DiscordBridge) startTeamsConsumerSender() {
+func (br *TeamsBridge) startTeamsConsumerSender() {
 	log := br.ZLog.With().Str("component", "teams-consumer-send").Logger()
 	if err := br.initTeamsConsumerSender(log); err != nil {
 		log.Warn().Err(err).Msg("Teams consumer sender unavailable")
 	}
 }
 
-func (br *DiscordBridge) initTeamsConsumerSender(log zerolog.Logger) error {
+func (br *TeamsBridge) initTeamsConsumerSender(log zerolog.Logger) error {
 	if br.ConfigPath == "" {
 		return errors.New("missing config path")
 	}
@@ -431,7 +431,7 @@ func (br *DiscordBridge) initTeamsConsumerSender(log zerolog.Logger) error {
 	return nil
 }
 
-func (br *DiscordBridge) ensureTeamsThreadStore() *teamsbridge.TeamsThreadStore {
+func (br *TeamsBridge) ensureTeamsThreadStore() *teamsbridge.TeamsThreadStore {
 	if br.TeamsThreadStore == nil {
 		br.TeamsThreadStore = teamsbridge.NewTeamsThreadStore(br.DB)
 	}

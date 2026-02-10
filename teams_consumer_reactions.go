@@ -6,9 +6,9 @@ import (
 	"maunium.net/go/mautrix/event"
 )
 
-// HandleTeamsConsumerReaction routes reaction events for Teams consumer rooms without
-// requiring a legacy Discord login session.
-func (br *DiscordBridge) HandleTeamsConsumerReaction(evt *event.Event) {
+// HandleTeamsConsumerReaction routes reaction events for Teams consumer rooms
+// without requiring legacy user-session checks.
+func (br *TeamsBridge) HandleTeamsConsumerReaction(evt *event.Event) {
 	if br == nil || evt == nil || evt.Type != event.EventReaction {
 		return
 	}
