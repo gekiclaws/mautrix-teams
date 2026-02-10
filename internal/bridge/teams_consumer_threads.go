@@ -13,9 +13,10 @@ import (
 // TeamsThreadDiscoverer performs remote discovery and normalization only.
 // It does not write to the database or create rooms.
 type TeamsThreadDiscoverer struct {
-	Lister ConversationLister
-	Token  string
-	Log    zerolog.Logger
+	Lister     ConversationLister
+	Token      string
+	SelfUserID string
+	Log        zerolog.Logger
 }
 
 // Discover lists conversations, normalizes them into threads, and filters out
@@ -41,7 +42,7 @@ func (d *TeamsThreadDiscoverer) Discover(ctx context.Context) ([]model.Thread, e
 
 	threads := make([]model.Thread, 0, len(convos))
 	for _, conv := range convos {
-		thread, ok := conv.Normalize()
+		thread, ok := conv.NormalizeForSelf(d.SelfUserID)
 		if !ok {
 			d.Log.Warn().Msg("skipping conversation with missing thread_id")
 			continue

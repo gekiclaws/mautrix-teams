@@ -78,6 +78,8 @@ type MessageIngestor struct {
 	Profiles         ProfileStore
 	SendIntents      SendIntentLookup
 	MessageMap       TeamsMessageMapWriter
+	RoomNames        RoomNameSyncer
+	SelfUserID       string
 	ReactionIngestor MessageReactionIngestor
 	UnreadTracker    UnreadTracker
 	Log              zerolog.Logger
@@ -244,6 +246,7 @@ func (m *MessageIngestor) IngestThread(ctx context.Context, threadID string, con
 			}
 			messagesIngested++
 			maybeMapMXID = eventID
+			m.maybeSyncDMRoomName(threadID, conversationID, roomID, senderID, displayName)
 			// Only inbound messages should mark the room unread. Send-intent echoes are excluded.
 			if m.UnreadTracker != nil {
 				m.UnreadTracker.MarkUnread(roomID)
@@ -315,6 +318,57 @@ func (m *MessageIngestor) IngestThread(ctx context.Context, threadID string, con
 		LastSequenceID:   lastSuccess,
 		Advanced:         true,
 	}, nil
+}
+
+func (m *MessageIngestor) maybeSyncDMRoomName(threadID string, conversationID string, roomID id.RoomID, senderID string, displayName string) {
+	if m == nil || m.RoomNames == nil || roomID == "" {
+		return
+	}
+	if !isLikelyOneToOneChat(threadID, conversationID) {
+		return
+	}
+	senderID = model.NormalizeTeamsUserID(senderID)
+	if senderID == "" || isLikelyTeamsBotSenderID(senderID) {
+		return
+	}
+	if selfID := model.NormalizeTeamsUserID(m.SelfUserID); selfID != "" && senderID == selfID {
+		return
+	}
+	name := strings.TrimSpace(displayName)
+	if name == "" {
+		return
+	}
+	if _, err := m.RoomNames.EnsureRoomName(roomID, name); err != nil {
+		m.Log.Debug().
+			Err(err).
+			Str("room_id", roomID.String()).
+			Str("conversation_id", conversationID).
+			Str("sender_id", senderID).
+			Str("name", name).
+			Msg("failed to sync dm room name from message display name")
+	}
+}
+
+func isOneToOneConversationID(conversationID string) bool {
+	raw := strings.ToLower(strings.TrimSpace(conversationID))
+	return strings.Contains(raw, "onetoone")
+}
+
+func isLikelyOneToOneThreadID(threadID string) bool {
+	raw := strings.ToLower(strings.TrimSpace(threadID))
+	if raw == "" {
+		return false
+	}
+	return strings.Contains(raw, "uni01_") || strings.Contains(raw, "@onetoone")
+}
+
+func isLikelyOneToOneChat(threadID string, conversationID string) bool {
+	return isOneToOneConversationID(conversationID) || isLikelyOneToOneThreadID(threadID)
+}
+
+func isLikelyTeamsBotSenderID(senderID string) bool {
+	raw := strings.ToLower(strings.TrimSpace(senderID))
+	return strings.HasPrefix(raw, "28:") || strings.Contains(raw, "teamsbot")
 }
 
 type MessageReactionIngestor interface {

@@ -80,6 +80,21 @@ func (f *fakeRoomStateReconciler) EnsureRoomState(roomID id.RoomID, adminMXIDs [
 	return "set_shared", "already_sufficient", nil
 }
 
+type fakeRoomNameSyncer struct {
+	calls []struct {
+		roomID id.RoomID
+		name   string
+	}
+}
+
+func (f *fakeRoomNameSyncer) EnsureRoomName(roomID id.RoomID, name string) (string, error) {
+	f.calls = append(f.calls, struct {
+		roomID id.RoomID
+		name   string
+	}{roomID: roomID, name: name})
+	return "set", nil
+}
+
 type fakeLister struct {
 	conversations []model.RemoteConversation
 }
@@ -155,6 +170,57 @@ func TestEnsureRoomCreates(t *testing.T) {
 	}
 }
 
+func TestEnsureRoomSetsNameForCreatedRoom(t *testing.T) {
+	store := &fakeStore{rooms: map[string]id.RoomID{}}
+	creator := &fakeCreator{roomID: "!created:example.org"}
+	nameSyncer := &fakeRoomNameSyncer{}
+	rooms := NewRoomsService(store, creator, &fakeAdminInviter{}, &fakeRoomStateReconciler{}, nil, zerolog.Nop())
+	rooms.NameSyncer = nameSyncer
+
+	thread := model.Thread{ID: "thread-2", RoomName: "Project Alpha"}
+	_, created, err := rooms.EnsureRoom(thread)
+	if err != nil {
+		t.Fatalf("EnsureRoom failed: %v", err)
+	}
+	if !created {
+		t.Fatalf("expected created=true")
+	}
+	if len(nameSyncer.calls) != 1 {
+		t.Fatalf("expected one room name ensure call, got %d", len(nameSyncer.calls))
+	}
+	if nameSyncer.calls[0].roomID != "!created:example.org" {
+		t.Fatalf("unexpected room id in room-name ensure: %s", nameSyncer.calls[0].roomID)
+	}
+	if nameSyncer.calls[0].name != "Project Alpha" {
+		t.Fatalf("unexpected room name: %s", nameSyncer.calls[0].name)
+	}
+}
+
+func TestEnsureRoomUpdatesNameForExistingRoom(t *testing.T) {
+	store := &fakeStore{rooms: map[string]id.RoomID{"thread-1": "!room:example.org"}}
+	creator := &fakeCreator{roomID: "!created:example.org"}
+	nameSyncer := &fakeRoomNameSyncer{}
+	rooms := NewRoomsService(store, creator, &fakeAdminInviter{}, &fakeRoomStateReconciler{}, nil, zerolog.Nop())
+	rooms.NameSyncer = nameSyncer
+
+	_, created, err := rooms.EnsureRoom(model.Thread{ID: "thread-1", RoomName: "Renamed Thread"})
+	if err != nil {
+		t.Fatalf("EnsureRoom failed: %v", err)
+	}
+	if created {
+		t.Fatalf("expected created=false")
+	}
+	if len(nameSyncer.calls) != 1 {
+		t.Fatalf("expected one room name ensure call, got %d", len(nameSyncer.calls))
+	}
+	if nameSyncer.calls[0].roomID != "!room:example.org" {
+		t.Fatalf("unexpected room id in room-name ensure: %s", nameSyncer.calls[0].roomID)
+	}
+	if nameSyncer.calls[0].name != "Renamed Thread" {
+		t.Fatalf("unexpected room name: %s", nameSyncer.calls[0].name)
+	}
+}
+
 func TestEnsureRoomInviteFailureNonFatal(t *testing.T) {
 	store := &fakeStore{rooms: map[string]id.RoomID{"thread-1": "!room:example.org"}}
 	creator := &fakeCreator{roomID: "!created:example.org"}
@@ -215,7 +281,7 @@ func TestDiscoverAndEnsureRoomsSkipsMissingID(t *testing.T) {
 	inviter := &fakeAdminInviter{}
 	rooms := NewRoomsService(store, creator, inviter, &fakeRoomStateReconciler{}, []id.UserID{"@admin:example.org"}, zerolog.Nop())
 
-	err := DiscoverAndEnsureRooms(context.Background(), "token123", lister, rooms, zerolog.Nop())
+	err := DiscoverAndEnsureRooms(context.Background(), "token123", "8:self", lister, rooms, zerolog.Nop())
 	if err != nil {
 		t.Fatalf("DiscoverAndEnsureRooms failed: %v", err)
 	}

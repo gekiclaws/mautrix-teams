@@ -124,6 +124,21 @@ func (f *fakeUnreadTracker) MarkUnread(roomID id.RoomID) {
 	f.rooms = append(f.rooms, roomID)
 }
 
+type fakeMessageRoomNameSyncer struct {
+	calls []struct {
+		roomID id.RoomID
+		name   string
+	}
+}
+
+func (f *fakeMessageRoomNameSyncer) EnsureRoomName(roomID id.RoomID, name string) (string, error) {
+	f.calls = append(f.calls, struct {
+		roomID id.RoomID
+		name   string
+	}{roomID: roomID, name: name})
+	return "set", nil
+}
+
 func TestIngestThreadFiltersBySequence(t *testing.T) {
 	lister := &fakeMessageLister{
 		messages: []model.RemoteMessage{
@@ -544,6 +559,90 @@ func TestIngestThreadDoesNotMarkUnreadForSendIntentEcho(t *testing.T) {
 	}
 	if len(unread.rooms) != 0 {
 		t.Fatalf("expected no unread marker for send intent echo, got %#v", unread.rooms)
+	}
+}
+
+func TestIngestThreadSyncsDMRoomNameFromIncomingDisplayName(t *testing.T) {
+	lister := &fakeMessageLister{
+		messages: []model.RemoteMessage{
+			{SequenceID: "1", SenderID: "8:remote", IMDisplayName: "Max W", Body: "one"},
+		},
+	}
+	sender := &fakeMatrixSender{}
+	roomNames := &fakeMessageRoomNameSyncer{}
+	ingestor := &MessageIngestor{
+		Lister:     lister,
+		Sender:     sender,
+		RoomNames:  roomNames,
+		SelfUserID: "8:self",
+		Log:        zerolog.New(io.Discard),
+	}
+
+	_, err := ingestor.IngestThread(context.Background(), "thread-1", "@oneToOne.skype", "!room:example", nil)
+	if err != nil {
+		t.Fatalf("IngestThread failed: %v", err)
+	}
+	if len(roomNames.calls) != 1 {
+		t.Fatalf("expected one room-name sync call, got %d", len(roomNames.calls))
+	}
+	if roomNames.calls[0].roomID != "!room:example" {
+		t.Fatalf("unexpected room id: %s", roomNames.calls[0].roomID)
+	}
+	if roomNames.calls[0].name != "Max W" {
+		t.Fatalf("unexpected room name: %s", roomNames.calls[0].name)
+	}
+}
+
+func TestIngestThreadSyncsDMRoomNameFromUniThreadIDHeuristic(t *testing.T) {
+	lister := &fakeMessageLister{
+		messages: []model.RemoteMessage{
+			{SequenceID: "1", SenderID: "8:remote", IMDisplayName: "Max W", Body: "one"},
+		},
+	}
+	sender := &fakeMatrixSender{}
+	roomNames := &fakeMessageRoomNameSyncer{}
+	ingestor := &MessageIngestor{
+		Lister:     lister,
+		Sender:     sender,
+		RoomNames:  roomNames,
+		SelfUserID: "8:self",
+		Log:        zerolog.New(io.Discard),
+	}
+
+	_, err := ingestor.IngestThread(context.Background(), "19:uni01_abc@thread.v2", "19:abc@thread.v2", "!room:example", nil)
+	if err != nil {
+		t.Fatalf("IngestThread failed: %v", err)
+	}
+	if len(roomNames.calls) != 1 {
+		t.Fatalf("expected one room-name sync call, got %d", len(roomNames.calls))
+	}
+	if roomNames.calls[0].name != "Max W" {
+		t.Fatalf("unexpected room name: %s", roomNames.calls[0].name)
+	}
+}
+
+func TestIngestThreadDoesNotSyncRoomNameForNonDMConversation(t *testing.T) {
+	lister := &fakeMessageLister{
+		messages: []model.RemoteMessage{
+			{SequenceID: "1", SenderID: "8:remote", IMDisplayName: "Max W", Body: "one"},
+		},
+	}
+	sender := &fakeMatrixSender{}
+	roomNames := &fakeMessageRoomNameSyncer{}
+	ingestor := &MessageIngestor{
+		Lister:     lister,
+		Sender:     sender,
+		RoomNames:  roomNames,
+		SelfUserID: "8:self",
+		Log:        zerolog.New(io.Discard),
+	}
+
+	_, err := ingestor.IngestThread(context.Background(), "thread-1", "19:group@thread.v2", "!room:example", nil)
+	if err != nil {
+		t.Fatalf("IngestThread failed: %v", err)
+	}
+	if len(roomNames.calls) != 0 {
+		t.Fatalf("expected no room-name sync calls, got %#v", roomNames.calls)
 	}
 }
 

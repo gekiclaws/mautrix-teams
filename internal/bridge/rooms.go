@@ -30,6 +30,10 @@ type RoomStateReconciler interface {
 	EnsureRoomState(roomID id.RoomID, adminMXIDs []id.UserID) (historyResult string, powerResult string, err error)
 }
 
+type RoomNameSyncer interface {
+	EnsureRoomName(roomID id.RoomID, name string) (result string, err error)
+}
+
 type IntentAdminInviter struct {
 	Intent *appservice.IntentAPI
 }
@@ -217,10 +221,7 @@ func (c *ClientRoomCreator) CreateRoom(thread model.Thread) (id.RoomID, error) {
 
 	initialState := roomInitialState(c.Encryption, c.Client.UserID, c.AdminMXIDs)
 
-	name := ""
-	if thread.IsOneToOne {
-		name = "Chat"
-	}
+	name := resolveMatrixRoomName(thread)
 
 	req := &mautrix.ReqCreateRoom{
 		Visibility:      "private",
@@ -265,10 +266,7 @@ func (c *IntentRoomCreator) CreateRoom(thread model.Thread) (id.RoomID, error) {
 
 	initialState := roomInitialState(c.Encryption, c.Intent.UserID, c.AdminMXIDs)
 
-	name := ""
-	if thread.IsOneToOne {
-		name = "Chat"
-	}
+	name := resolveMatrixRoomName(thread)
 
 	req := &mautrix.ReqCreateRoom{
 		Visibility:      "private",
@@ -435,11 +433,49 @@ func ensureAdminSendPermissionLevels(pl *event.PowerLevelsEventContent, adminMXI
 	return changed
 }
 
+type IntentRoomNameSyncer struct {
+	Intent *appservice.IntentAPI
+}
+
+func NewIntentRoomNameSyncer(intent *appservice.IntentAPI) *IntentRoomNameSyncer {
+	return &IntentRoomNameSyncer{Intent: intent}
+}
+
+func (s *IntentRoomNameSyncer) EnsureRoomName(roomID id.RoomID, name string) (string, error) {
+	if s == nil || s.Intent == nil {
+		return "", errors.New("missing bot intent")
+	}
+	resolved := strings.TrimSpace(name)
+	if roomID == "" || resolved == "" {
+		return "skipped", nil
+	}
+	var existing event.RoomNameEventContent
+	err := s.Intent.StateEvent(roomID, event.StateRoomName, "", &existing)
+	existingKnown := err == nil
+	if err == nil && strings.TrimSpace(existing.Name) == resolved {
+		return "already_set", nil
+	}
+	if err != nil && !errors.Is(err, mautrix.MNotFound) {
+		return "", err
+	}
+	_, err = s.Intent.SendStateEvent(roomID, event.StateRoomName, "", &event.Content{
+		Parsed: &event.RoomNameEventContent{Name: resolved},
+	})
+	if err != nil {
+		return "", err
+	}
+	if !existingKnown || strings.TrimSpace(existing.Name) == "" {
+		return "set", nil
+	}
+	return "updated", nil
+}
+
 type RoomsService struct {
 	Store        ThreadStore
 	Creator      RoomCreator
 	AdminInviter RoomAdminInviter
 	Reconciler   RoomStateReconciler
+	NameSyncer   RoomNameSyncer
 	AdminMXIDs   []id.UserID
 	Log          zerolog.Logger
 
@@ -477,6 +513,7 @@ func (r *RoomsService) EnsureRoom(thread model.Thread) (id.RoomID, bool, error) 
 				return "", false, err
 			}
 			r.ensureRoomState(thread.ID, roomID)
+			r.ensureRoomName(thread, roomID)
 			r.ensureAdminsInvited(thread.ID, roomID)
 			return roomID, false, nil
 		}
@@ -498,6 +535,7 @@ func (r *RoomsService) EnsureRoom(thread model.Thread) (id.RoomID, bool, error) 
 		Str("thread_id", thread.ID).
 		Msg("matrix room created")
 	r.ensureRoomState(thread.ID, roomID)
+	r.ensureRoomName(thread, roomID)
 	r.ensureAdminsInvited(thread.ID, roomID)
 	return roomID, true, nil
 }
@@ -531,6 +569,30 @@ func (r *RoomsService) ensureRoomState(threadID string, roomID id.RoomID) {
 	log.Msg("matrix room state ensured")
 }
 
+func resolveMatrixRoomName(thread model.Thread) string {
+	if name := strings.TrimSpace(thread.RoomName); name != "" {
+		return name
+	}
+	return "Chat"
+}
+
+func (r *RoomsService) ensureRoomName(thread model.Thread, roomID id.RoomID) {
+	if r == nil || r.NameSyncer == nil || roomID == "" {
+		return
+	}
+	name := resolveMatrixRoomName(thread)
+	result, err := r.NameSyncer.EnsureRoomName(roomID, name)
+	log := r.Log.Debug().
+		Str("room_id", roomID.String()).
+		Str("thread_id", thread.ID).
+		Str("name", name)
+	if err != nil {
+		log.Err(err).Msg("matrix room name ensure failed")
+		return
+	}
+	log.Str("result", result).Msg("matrix room name ensured")
+}
+
 func (r *RoomsService) ensureAdminsInvited(threadID string, roomID id.RoomID) {
 	if r == nil || r.AdminInviter == nil || len(r.AdminMXIDs) == 0 || roomID == "" {
 		return
@@ -562,11 +624,12 @@ type ConversationLister interface {
 	ListConversations(ctx context.Context, token string) ([]model.RemoteConversation, error)
 }
 
-func DiscoverAndEnsureRooms(ctx context.Context, token string, lister ConversationLister, rooms *RoomsService, log zerolog.Logger) error {
+func DiscoverAndEnsureRooms(ctx context.Context, token string, selfUserID string, lister ConversationLister, rooms *RoomsService, log zerolog.Logger) error {
 	discoverer := &TeamsThreadDiscoverer{
-		Lister: lister,
-		Token:  token,
-		Log:    log,
+		Lister:     lister,
+		Token:      token,
+		SelfUserID: selfUserID,
+		Log:        log,
 	}
 	threads, err := discoverer.Discover(ctx)
 	if err != nil {

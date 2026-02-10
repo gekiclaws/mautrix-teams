@@ -54,6 +54,7 @@ func (br *TeamsBridge) runTeamsConsumerRoomSync(ctx context.Context, log zerolog
 	adminMXIDs := br.resolveTeamsAdminInviteMXIDs(log)
 	creator := teamsbridge.NewIntentRoomCreator(br.Bot, &br.Config.Bridge, adminMXIDs)
 	rooms := teamsbridge.NewRoomsService(store, creator, teamsbridge.NewIntentAdminInviter(br.Bot), teamsbridge.NewIntentRoomStateReconciler(br.Bot), adminMXIDs, log)
+	rooms.NameSyncer = teamsbridge.NewIntentRoomNameSyncer(br.Bot)
 
 	for _, row := range br.DB.TeamsThread.GetAll() {
 		if row == nil || row.ThreadID == "" || row.RoomID == "" {
@@ -72,7 +73,7 @@ func (br *TeamsBridge) runTeamsConsumerRoomSync(ctx context.Context, log zerolog
 		}
 	}
 
-	return teamsbridge.DiscoverAndEnsureRooms(ctx, state.SkypeToken, consumer, rooms, log)
+	return teamsbridge.DiscoverAndEnsureRooms(ctx, state.SkypeToken, state.TeamsUserID, consumer, rooms, log)
 }
 
 func (br *TeamsBridge) startTeamsConsumerMessageSync() {
@@ -110,10 +111,12 @@ func (br *TeamsBridge) runTeamsConsumerMessageSync(ctx context.Context, log zero
 	adminMXIDs := br.resolveTeamsAdminInviteMXIDs(log)
 	creator := teamsbridge.NewIntentRoomCreator(br.Bot, &br.Config.Bridge, adminMXIDs)
 	rooms := teamsbridge.NewRoomsService(store, creator, teamsbridge.NewIntentAdminInviter(br.Bot), teamsbridge.NewIntentRoomStateReconciler(br.Bot), adminMXIDs, log)
+	rooms.NameSyncer = teamsbridge.NewIntentRoomNameSyncer(br.Bot)
 	discoverer := &teamsbridge.TeamsThreadDiscoverer{
-		Lister: consumer,
-		Token:  state.SkypeToken,
-		Log:    log,
+		Lister:     consumer,
+		Token:      state.SkypeToken,
+		SelfUserID: state.TeamsUserID,
+		Log:        log,
 	}
 	if br.TeamsUnreadCycles == nil {
 		br.TeamsUnreadCycles = teamsbridge.NewUnreadCycleTracker()
@@ -125,6 +128,8 @@ func (br *TeamsBridge) runTeamsConsumerMessageSync(ctx context.Context, log zero
 		Profiles:      br.DB.TeamsProfile,
 		SendIntents:   br.DB.TeamsSendIntent,
 		MessageMap:    br.DB.TeamsMessageMap,
+		RoomNames:     rooms.NameSyncer,
+		SelfUserID:    state.TeamsUserID,
 		UnreadTracker: br.TeamsUnreadCycles,
 		ReactionIngestor: &teamsbridge.TeamsReactionIngestor{
 			Sender:    &teamsbridge.BotMatrixReactionSender{Client: br.Bot.Client},
