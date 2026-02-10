@@ -116,7 +116,7 @@ func TestTeamsConsumerReactorAddSuccess(t *testing.T) {
 		t.Fatalf("expected add call, got %d", len(client.addCalls))
 	}
 	call := client.addCalls[0]
-	if call.threadID != "19:abc@thread.v2" || call.teamsMessageID != "msg/1" || call.emotionKey != "like" {
+	if call.threadID != "19:abc@thread.v2" || call.teamsMessageID != "1" || call.emotionKey != "like" {
 		t.Fatalf("unexpected add call: %#v", call)
 	}
 	if call.appliedAtMS == 0 {
@@ -179,7 +179,7 @@ func TestTeamsConsumerReactorRemoveSuccess(t *testing.T) {
 		t.Fatalf("expected remove call, got %d", len(client.removeCalls))
 	}
 	call := client.removeCalls[0]
-	if call.threadID != "19:abc@thread.v2" || call.teamsMessageID != "msg/1" || call.emotionKey != "like" {
+	if call.threadID != "19:abc@thread.v2" || call.teamsMessageID != "1" || call.emotionKey != "like" {
 		t.Fatalf("unexpected remove call: %#v", call)
 	}
 	if len(reactions.deleted) != 1 || reactions.deleted[0] != "$reaction" {

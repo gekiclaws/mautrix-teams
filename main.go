@@ -106,6 +106,7 @@ func (br *DiscordBridge) Init() {
 	br.CommandProcessor = commands.NewProcessor(&br.Bridge)
 	br.RegisterCommands()
 	br.EventProcessor.On(event.StateTombstone, br.HandleTombstone)
+	br.EventProcessor.On(event.EventReaction, br.HandleTeamsConsumerReaction)
 
 	matrixHTMLParser.PillConverter = br.pillConverter
 
