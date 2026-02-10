@@ -58,7 +58,9 @@ func (mq *TeamsMessageMapQuery) GetLatestInboundBefore(threadID string, maxTS in
 	if threadID == "" || maxTS == 0 || selfUserID == "" {
 		return nil
 	}
-	query := teamsMessageMapSelect + " WHERE thread_id=$1 AND message_ts IS NOT NULL AND message_ts <= $2 AND sender_id IS NOT NULL AND sender_id != '' AND sender_id != $3 ORDER BY message_ts DESC LIMIT 1"
+	// Consumption horizon read targets should point to the latest message authored
+	// by the local Teams user before the remote participant's latest read timestamp.
+	query := teamsMessageMapSelect + " WHERE thread_id=$1 AND message_ts IS NOT NULL AND message_ts <= $2 AND sender_id = $3 ORDER BY message_ts DESC LIMIT 1"
 	return mq.New().Scan(mq.db.QueryRow(query, threadID, maxTS, selfUserID))
 }
 

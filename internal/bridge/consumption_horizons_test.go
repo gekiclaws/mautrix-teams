@@ -69,7 +69,7 @@ type fakeReadMarkerSender struct {
 	err   error
 }
 
-func (f *fakeReadMarkerSender) SetReadMarkers(roomID id.RoomID, eventID id.EventID) error {
+func (f *fakeReadMarkerSender) SetReadMarkers(roomID id.RoomID, eventID id.EventID, teamsUserID string) error {
 	f.calls = append(f.calls, eventID)
 	return f.err
 }

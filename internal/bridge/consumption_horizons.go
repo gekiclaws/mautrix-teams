@@ -7,6 +7,7 @@ import (
 
 	"github.com/rs/zerolog"
 	"maunium.net/go/mautrix"
+	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
 
 	"go.mau.fi/mautrix-teams/database"
@@ -27,22 +28,19 @@ type ConsumptionHorizonStateStore interface {
 }
 
 type ReadMarkerSender interface {
-	SetReadMarkers(roomID id.RoomID, eventID id.EventID) error
+	SetReadMarkers(roomID id.RoomID, eventID id.EventID, teamsUserID string) error
 }
 
 type BotMatrixReadMarkerSender struct {
 	Client *mautrix.Client
 }
 
-func (s *BotMatrixReadMarkerSender) SetReadMarkers(roomID id.RoomID, eventID id.EventID) error {
+func (s *BotMatrixReadMarkerSender) SetReadMarkers(roomID id.RoomID, eventID id.EventID, teamsUserID string) error {
 	if s == nil || s.Client == nil {
 		return errors.New("missing matrix client")
 	}
-	content := &mautrix.ReqSetReadMarkers{
-		Read:      eventID,
-		FullyRead: eventID,
-	}
-	return s.Client.SetReadMarkers(roomID, content)
+	// Use explicit m.read receipts so the remote side sees "seen" for this event.
+	return s.Client.SendReceipt(roomID, eventID, event.ReceiptTypeRead, map[string]any{})
 }
 
 type TeamsConsumptionHorizonIngestor struct {
@@ -141,7 +139,7 @@ func (i *TeamsConsumptionHorizonIngestor) PollOnce(ctx context.Context, threadID
 	markerSent := false
 	var markerErr error
 	if mapping != nil && mapping.MXID != "" {
-		markerErr = i.Sender.SetReadMarkers(roomID, mapping.MXID)
+		markerErr = i.Sender.SetReadMarkers(roomID, mapping.MXID, remoteID)
 		markerSent = (markerErr == nil)
 	}
 
