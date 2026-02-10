@@ -22,7 +22,7 @@ func TestListMessagesSuccess(t *testing.T) {
 		gotAuth = append(gotAuth, r.Header.Get("authentication"))
 		gotPath = r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"messages":[{"id":"m1","clientmessageid":"c1","sequenceId":2,"from":{"id":"u1"},"imdisplayname":"User One","fromDisplayNameInToken":"Token User","createdTime":"2024-01-01T00:00:00Z","content":{"text":"hello"}},{"id":"m2","sequenceId":"1","content":{"text":""}}]}`))
+		_, _ = w.Write([]byte(`{"messages":[{"id":"m1","clientmessageid":"c1","sequenceId":2,"from":{"id":"u1"},"imdisplayname":"User One","fromDisplayNameInToken":"Token User","originalarrivaltime":"2024-01-01T00:00:00Z","content":{"text":"hello"}},{"id":"m2","sequenceId":"1","content":{"text":""}}]}`))
 	}))
 	defer server.Close()
 
@@ -117,6 +117,35 @@ func TestListMessagesMissingOptionalFields(t *testing.T) {
 	}
 	if !msgs[0].Timestamp.IsZero() {
 		t.Fatalf("expected zero timestamp")
+	}
+}
+
+func TestListMessagesTimestampUsesOnlyOriginalArrivalTime(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"messages":[` +
+			`{"id":"m1","sequenceId":"1","content":{"text":"one"},"originalarrivaltime":"2026-02-08T07:48:12.8740000Z"},` +
+			`{"id":"m2","sequenceId":"2","content":{"text":"two"},"composetime":"2026-02-08T07:48:13.8740000Z","createdTime":"2026-02-08T07:48:14.8740000Z"}` +
+			`]}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client())
+	client.MessagesURL = server.URL + "/conversations"
+	client.Token = "token123"
+
+	msgs, err := client.ListMessages(context.Background(), "@oneToOne.skype", "")
+	if err != nil {
+		t.Fatalf("ListMessages failed: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("unexpected messages length: %d", len(msgs))
+	}
+	if got := msgs[0].Timestamp.Format(time.RFC3339Nano); got != "2026-02-08T07:48:12.874Z" {
+		t.Fatalf("unexpected timestamp from originalarrivaltime: %s", got)
+	}
+	if !msgs[1].Timestamp.IsZero() {
+		t.Fatalf("expected zero timestamp when originalarrivaltime is missing, got %s", msgs[1].Timestamp.Format(time.RFC3339Nano))
 	}
 }
 

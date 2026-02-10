@@ -32,14 +32,16 @@ type fakeMatrixSender struct {
 	failBody string
 	sent     []string
 	extra    []map[string]any
+	ts       []time.Time
 }
 
-func (f *fakeMatrixSender) SendText(roomID id.RoomID, body string, extra map[string]any) (id.EventID, error) {
+func (f *fakeMatrixSender) SendText(roomID id.RoomID, body string, extra map[string]any, timestamp time.Time) (id.EventID, error) {
 	if body == f.failBody {
 		return "", errors.New("send failed")
 	}
 	f.sent = append(f.sent, body)
 	f.extra = append(f.extra, extra)
+	f.ts = append(f.ts, timestamp)
 	return id.EventID("$event"), nil
 }
 
@@ -415,6 +417,35 @@ func TestIngestThreadStoresMessageMetadataInMap(t *testing.T) {
 	}
 	if entry.SenderID == nil || *entry.SenderID != "8:user-2" {
 		t.Fatalf("unexpected sender_id: %#v", entry.SenderID)
+	}
+}
+
+func TestIngestThreadPassesMessageTimestampToMatrixSender(t *testing.T) {
+	ts := time.UnixMilli(1700000000123)
+	lister := &fakeMessageLister{
+		messages: []model.RemoteMessage{
+			{SequenceID: "1", MessageID: "m1", Timestamp: ts, Body: "one"},
+		},
+	}
+	sender := &fakeMatrixSender{}
+	ingestor := &MessageIngestor{
+		Lister: lister,
+		Sender: sender,
+		Log:    zerolog.New(io.Discard),
+	}
+
+	res, err := ingestor.IngestThread(context.Background(), "thread-1", "@oneToOne.skype", "!room:example", nil)
+	if err != nil {
+		t.Fatalf("IngestThread failed: %v", err)
+	}
+	if !res.Advanced {
+		t.Fatalf("expected advancement on success")
+	}
+	if len(sender.ts) != 1 {
+		t.Fatalf("expected one sent timestamp, got %d", len(sender.ts))
+	}
+	if !sender.ts[0].Equal(ts) {
+		t.Fatalf("unexpected sent timestamp: %s", sender.ts[0].Format(time.RFC3339Nano))
 	}
 }
 

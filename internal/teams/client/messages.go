@@ -48,7 +48,7 @@ type remoteMessage struct {
 	ID                     string          `json:"id"`
 	ClientMessageID        string          `json:"clientmessageid"`
 	SequenceID             json.RawMessage `json:"sequenceId"`
-	CreatedTime            string          `json:"createdTime"`
+	OriginalArrivalTime    string          `json:"originalarrivaltime"`
 	From                   json.RawMessage `json:"from"`
 	IMDisplayName          string          `json:"imdisplayname"`
 	FromDisplayNameInToken string          `json:"fromDisplayNameInToken"`
@@ -100,7 +100,7 @@ func (c *Client) ListMessages(ctx context.Context, conversationID string, sinceS
 			SenderID:         senderID,
 			IMDisplayName:    msg.IMDisplayName,
 			TokenDisplayName: msg.FromDisplayNameInToken,
-			Timestamp:        model.ParseTimestamp(msg.CreatedTime),
+			Timestamp:        model.ParseTimestamp(msg.OriginalArrivalTime),
 			Body:             content.Body,
 			FormattedBody:    content.FormattedBody,
 			PropertiesFiles:  model.ExtractFilesProperty(msg.Properties),

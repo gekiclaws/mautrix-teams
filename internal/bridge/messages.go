@@ -20,7 +20,7 @@ type MessageLister interface {
 }
 
 type MatrixSender interface {
-	SendText(roomID id.RoomID, body string, extra map[string]any) (id.EventID, error)
+	SendText(roomID id.RoomID, body string, extra map[string]any, timestamp time.Time) (id.EventID, error)
 }
 
 type SendIntentLookup interface {
@@ -39,7 +39,7 @@ type BotMatrixSender struct {
 	Client *mautrix.Client
 }
 
-func (s *BotMatrixSender) SendText(roomID id.RoomID, body string, extra map[string]any) (id.EventID, error) {
+func (s *BotMatrixSender) SendText(roomID id.RoomID, body string, extra map[string]any, timestamp time.Time) (id.EventID, error) {
 	if s == nil || s.Client == nil {
 		return "", errors.New("missing matrix client")
 	}
@@ -55,7 +55,11 @@ func (s *BotMatrixSender) SendText(roomID id.RoomID, body string, extra map[stri
 		content.Format = event.Format(format)
 	}
 	wrapped := event.Content{Parsed: &content, Raw: extra}
-	resp, err := s.Client.SendMessageEvent(roomID, event.EventMessage, &wrapped)
+	sendReq := mautrix.ReqSendEvent{}
+	if !timestamp.IsZero() {
+		sendReq.Timestamp = timestamp.UnixMilli()
+	}
+	resp, err := s.Client.SendMessageEvent(roomID, event.EventMessage, &wrapped, sendReq)
 	if err != nil {
 		return "", err
 	}
@@ -228,7 +232,7 @@ func (m *MessageIngestor) IngestThread(ctx context.Context, threadID string, con
 
 		maybeMapMXID := intentMXID
 		if maybeMapMXID == "" {
-			eventID, err := m.Sender.SendText(roomID, rendered.Body, extra)
+			eventID, err := m.Sender.SendText(roomID, rendered.Body, extra, msg.Timestamp)
 			if err != nil {
 				m.Log.Error().
 					Err(err).
