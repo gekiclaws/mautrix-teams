@@ -20,8 +20,7 @@ type Database struct {
 	TeamsProfile            *TeamsProfileQuery
 	TeamsSendIntent         *TeamsSendIntentQuery
 	TeamsMessageMap         *TeamsMessageMapQuery
-	TeamsReactionMap        *TeamsReactionMapQuery
-	TeamsReaction           *TeamsReactionStateQuery
+	ReactionMap             *ReactionMapQuery
 	TeamsConsumptionHorizon *TeamsConsumptionHorizonQuery
 }
 
@@ -48,13 +47,9 @@ func New(baseDB *dbutil.Database, log maulogger.Logger) *Database {
 		db:  db,
 		log: log.Sub("TeamsMessageMap"),
 	}
-	db.TeamsReactionMap = &TeamsReactionMapQuery{
+	db.ReactionMap = &ReactionMapQuery{
 		db:  db,
-		log: log.Sub("TeamsReactionMap"),
-	}
-	db.TeamsReaction = &TeamsReactionStateQuery{
-		db:  db,
-		log: log.Sub("TeamsReaction"),
+		log: log.Sub("ReactionMap"),
 	}
 	db.TeamsConsumptionHorizon = &TeamsConsumptionHorizonQuery{
 		db:  db,

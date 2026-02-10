@@ -103,7 +103,7 @@ func runDevReact(args []string) error {
 
 	store := teamsbridge.NewTeamsThreadStore(teamsDB)
 	store.LoadAll()
-	reactor := teamsbridge.NewTeamsConsumerReactor(consumer, store, teamsDB.TeamsMessageMap, teamsDB.TeamsReactionMap, reactLog)
+	reactor := teamsbridge.NewTeamsConsumerReactor(consumer, store, teamsDB.TeamsMessageMap, teamsDB.ReactionMap, state.TeamsUserID, reactLog)
 
 	threadID, ok := store.GetThreadID(opts.RoomID)
 	if !ok || strings.TrimSpace(threadID) == "" {

@@ -2,10 +2,12 @@ package teamsbridge
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 
 	"github.com/rs/zerolog"
+	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/id"
 
 	"go.mau.fi/mautrix-teams/database"
@@ -13,41 +15,46 @@ import (
 )
 
 type fakeMatrixReactionSender struct {
-	nextID  int
-	sent    []reactionSendCall
-	redacts []reactionRedactCall
+	nextID    int
+	sent      []reactionSendCall
+	redacts   []reactionRedactCall
+	redactErr error
 }
 
 type reactionSendCall struct {
-	roomID  id.RoomID
-	target  id.EventID
-	emoji   string
-	eventID id.EventID
+	roomID      id.RoomID
+	target      id.EventID
+	emoji       string
+	eventID     id.EventID
+	teamsUserID string
 }
 
 type reactionRedactCall struct {
-	roomID  id.RoomID
-	eventID id.EventID
+	roomID      id.RoomID
+	eventID     id.EventID
+	teamsUserID string
 }
 
-func (f *fakeMatrixReactionSender) SendReaction(roomID id.RoomID, target id.EventID, key string) (id.EventID, error) {
+func (f *fakeMatrixReactionSender) SendReactionAsTeamsUser(roomID id.RoomID, target id.EventID, key string, teamsUserID string) (id.EventID, error) {
 	f.nextID++
 	eventID := id.EventID(fmt.Sprintf("$reaction-%d", f.nextID))
 	f.sent = append(f.sent, reactionSendCall{
-		roomID:  roomID,
-		target:  target,
-		emoji:   key,
-		eventID: eventID,
+		roomID:      roomID,
+		target:      target,
+		emoji:       key,
+		eventID:     eventID,
+		teamsUserID: teamsUserID,
 	})
 	return eventID, nil
 }
 
-func (f *fakeMatrixReactionSender) Redact(roomID id.RoomID, eventID id.EventID) (id.EventID, error) {
+func (f *fakeMatrixReactionSender) RedactReactionAsTeamsUser(roomID id.RoomID, eventID id.EventID, teamsUserID string) error {
 	f.redacts = append(f.redacts, reactionRedactCall{
-		roomID:  roomID,
-		eventID: eventID,
+		roomID:      roomID,
+		eventID:     eventID,
+		teamsUserID: teamsUserID,
 	})
-	return id.EventID("$redact"), nil
+	return f.redactErr
 }
 
 type fakeTeamsMessageMapLookup struct {
@@ -61,17 +68,28 @@ func (f *fakeTeamsMessageMapLookup) GetByTeamsMessageID(threadID string, teamsMe
 	return f.byKey[threadID+"|"+teamsMessageID]
 }
 
-type fakeTeamsReactionStateStore struct {
-	byKey    map[string]*database.TeamsReactionState
-	inserted []*database.TeamsReactionState
-	deleted  []string
+type fakeReactionStateStore struct {
+	byKey   map[string]*database.ReactionMap
+	upserts []*database.ReactionMap
+	deleted []string
 }
 
-func (f *fakeTeamsReactionStateStore) ListByMessage(threadID string, teamsMessageID string) ([]*database.TeamsReactionState, error) {
+func (f *fakeReactionStateStore) key(threadID string, teamsMessageID string, teamsUserID string, reactionKey string) string {
+	return threadID + "|" + teamsMessageID + "|" + teamsUserID + "|" + reactionKey
+}
+
+func (f *fakeReactionStateStore) GetByKey(threadID string, teamsMessageID string, teamsUserID string, reactionKey string) *database.ReactionMap {
+	if f == nil || f.byKey == nil {
+		return nil
+	}
+	return f.byKey[f.key(threadID, teamsMessageID, teamsUserID, reactionKey)]
+}
+
+func (f *fakeReactionStateStore) ListByMessage(threadID string, teamsMessageID string) ([]*database.ReactionMap, error) {
 	if f == nil || f.byKey == nil {
 		return nil, nil
 	}
-	var states []*database.TeamsReactionState
+	var states []*database.ReactionMap
 	for _, state := range f.byKey {
 		if state.ThreadID == threadID && state.TeamsMessageID == teamsMessageID {
 			states = append(states, state)
@@ -80,18 +98,17 @@ func (f *fakeTeamsReactionStateStore) ListByMessage(threadID string, teamsMessag
 	return states, nil
 }
 
-func (f *fakeTeamsReactionStateStore) Insert(state *database.TeamsReactionState) error {
+func (f *fakeReactionStateStore) Upsert(state *database.ReactionMap) error {
 	if f.byKey == nil {
-		f.byKey = make(map[string]*database.TeamsReactionState)
+		f.byKey = make(map[string]*database.ReactionMap)
 	}
-	key := reactionKey(state.EmotionKey, state.UserMRI)
-	f.byKey[state.ThreadID+"|"+state.TeamsMessageID+"|"+key] = state
-	f.inserted = append(f.inserted, state)
+	f.byKey[f.key(state.ThreadID, state.TeamsMessageID, state.TeamsUserID, state.ReactionKey)] = state
+	f.upserts = append(f.upserts, state)
 	return nil
 }
 
-func (f *fakeTeamsReactionStateStore) Delete(threadID string, teamsMessageID string, emotionKey string, userMRI string) error {
-	key := threadID + "|" + teamsMessageID + "|" + reactionKey(emotionKey, userMRI)
+func (f *fakeReactionStateStore) DeleteByKey(threadID string, teamsMessageID string, teamsUserID string, reactionKey string) error {
+	key := f.key(threadID, teamsMessageID, teamsUserID, reactionKey)
 	delete(f.byKey, key)
 	f.deleted = append(f.deleted, key)
 	return nil
@@ -99,7 +116,7 @@ func (f *fakeTeamsReactionStateStore) Delete(threadID string, teamsMessageID str
 
 func TestTeamsReactionIngestAddsNewReaction(t *testing.T) {
 	sender := &fakeMatrixReactionSender{}
-	store := &fakeTeamsReactionStateStore{}
+	store := &fakeReactionStateStore{}
 	ingestor := &TeamsReactionIngestor{
 		Sender:    sender,
 		Messages:  &fakeTeamsMessageMapLookup{},
@@ -108,12 +125,10 @@ func TestTeamsReactionIngestAddsNewReaction(t *testing.T) {
 	}
 	msg := model.RemoteMessage{
 		MessageID: "m1",
-		Reactions: []model.MessageReaction{
-			{
-				EmotionKey: "like",
-				Users:      []model.MessageReactionUser{{MRI: "8:one", TimeMS: 1700000000000}},
-			},
-		},
+		Reactions: []model.MessageReaction{{
+			EmotionKey: "like",
+			Users:      []model.MessageReactionUser{{MRI: "8:one", TimeMS: 1700000000000}},
+		}},
 	}
 	target := id.EventID("$target")
 	if err := ingestor.IngestMessageReactions(context.Background(), "t1", "!room", msg, target); err != nil {
@@ -122,39 +137,24 @@ func TestTeamsReactionIngestAddsNewReaction(t *testing.T) {
 	if len(sender.sent) != 1 {
 		t.Fatalf("expected one send call, got %d", len(sender.sent))
 	}
-	if sender.sent[0].target != target {
-		t.Fatalf("unexpected target: %q", sender.sent[0].target)
+	if sender.sent[0].teamsUserID != "8:one" {
+		t.Fatalf("expected teams user 8:one, got %s", sender.sent[0].teamsUserID)
 	}
-	if sender.sent[0].emoji == "" {
-		t.Fatalf("expected emoji")
-	}
-	if len(store.inserted) != 1 {
-		t.Fatalf("expected one insert, got %d", len(store.inserted))
+	if len(store.upserts) != 1 {
+		t.Fatalf("expected one upsert, got %d", len(store.upserts))
 	}
 }
 
 func TestTeamsReactionIngestUsesMappingWhenTargetMissing(t *testing.T) {
 	sender := &fakeMatrixReactionSender{}
-	store := &fakeTeamsReactionStateStore{}
-	lookup := &fakeTeamsMessageMapLookup{
-		byKey: map[string]*database.TeamsMessageMap{
-			"t1|m1": {MXID: "$mapped", ThreadID: "t1", TeamsMessageID: "m1"},
-		},
-	}
-	ingestor := &TeamsReactionIngestor{
-		Sender:    sender,
-		Messages:  lookup,
-		Reactions: store,
-		Log:       zerolog.Nop(),
-	}
+	store := &fakeReactionStateStore{}
+	lookup := &fakeTeamsMessageMapLookup{byKey: map[string]*database.TeamsMessageMap{
+		"t1|msg/m1": {MXID: "$mapped", ThreadID: "t1", TeamsMessageID: "msg/m1"},
+	}}
+	ingestor := &TeamsReactionIngestor{Sender: sender, Messages: lookup, Reactions: store, Log: zerolog.Nop()}
 	msg := model.RemoteMessage{
 		MessageID: "m1",
-		Reactions: []model.MessageReaction{
-			{
-				EmotionKey: "like",
-				Users:      []model.MessageReactionUser{{MRI: "8:one"}},
-			},
-		},
+		Reactions: []model.MessageReaction{{EmotionKey: "like", Users: []model.MessageReactionUser{{MRI: "8:one"}}}},
 	}
 	if err := ingestor.IngestMessageReactions(context.Background(), "t1", "!room", msg, ""); err != nil {
 		t.Fatalf("IngestMessageReactions failed: %v", err)
@@ -166,23 +166,12 @@ func TestTeamsReactionIngestUsesMappingWhenTargetMissing(t *testing.T) {
 
 func TestTeamsReactionIngestRemovesMissingReaction(t *testing.T) {
 	sender := &fakeMatrixReactionSender{}
-	store := &fakeTeamsReactionStateStore{
-		byKey: map[string]*database.TeamsReactionState{
-			"t1|m1|like\x008:one": {
-				ThreadID:       "t1",
-				TeamsMessageID: "m1",
-				EmotionKey:     "like",
-				UserMRI:        "8:one",
-				MatrixEventID:  "$reaction",
-			},
+	store := &fakeReactionStateStore{byKey: map[string]*database.ReactionMap{
+		"t1|msg/m1|8:one|like": {
+			ThreadID: "t1", TeamsMessageID: "msg/m1", TeamsUserID: "8:one", ReactionKey: "like", MatrixReactionEventID: "$reaction",
 		},
-	}
-	ingestor := &TeamsReactionIngestor{
-		Sender:    sender,
-		Messages:  &fakeTeamsMessageMapLookup{},
-		Reactions: store,
-		Log:       zerolog.Nop(),
-	}
+	}}
+	ingestor := &TeamsReactionIngestor{Sender: sender, Messages: &fakeTeamsMessageMapLookup{}, Reactions: store, Log: zerolog.Nop()}
 	msg := model.RemoteMessage{MessageID: "m1"}
 	if err := ingestor.IngestMessageReactions(context.Background(), "t1", "!room", msg, ""); err != nil {
 		t.Fatalf("IngestMessageReactions failed: %v", err)
@@ -197,29 +186,13 @@ func TestTeamsReactionIngestRemovesMissingReaction(t *testing.T) {
 
 func TestTeamsReactionIngestIdempotent(t *testing.T) {
 	sender := &fakeMatrixReactionSender{}
-	store := &fakeTeamsReactionStateStore{
-		byKey: map[string]*database.TeamsReactionState{
-			"t1|m1|like\x008:one": {
-				ThreadID:       "t1",
-				TeamsMessageID: "m1",
-				EmotionKey:     "like",
-				UserMRI:        "8:one",
-				MatrixEventID:  "$reaction",
-			},
+	store := &fakeReactionStateStore{byKey: map[string]*database.ReactionMap{
+		"t1|msg/m1|8:one|like": {
+			ThreadID: "t1", TeamsMessageID: "msg/m1", TeamsUserID: "8:one", ReactionKey: "like", MatrixReactionEventID: "$reaction",
 		},
-	}
-	ingestor := &TeamsReactionIngestor{
-		Sender:    sender,
-		Messages:  &fakeTeamsMessageMapLookup{},
-		Reactions: store,
-		Log:       zerolog.Nop(),
-	}
-	msg := model.RemoteMessage{
-		MessageID: "m1",
-		Reactions: []model.MessageReaction{
-			{EmotionKey: "like", Users: []model.MessageReactionUser{{MRI: "8:one"}}},
-		},
-	}
+	}}
+	ingestor := &TeamsReactionIngestor{Sender: sender, Messages: &fakeTeamsMessageMapLookup{}, Reactions: store, Log: zerolog.Nop()}
+	msg := model.RemoteMessage{MessageID: "m1", Reactions: []model.MessageReaction{{EmotionKey: "like", Users: []model.MessageReactionUser{{MRI: "8:one"}}}}}
 	if err := ingestor.IngestMessageReactions(context.Background(), "t1", "!room", msg, ""); err != nil {
 		t.Fatalf("IngestMessageReactions failed: %v", err)
 	}
@@ -230,46 +203,58 @@ func TestTeamsReactionIngestIdempotent(t *testing.T) {
 
 func TestTeamsReactionIngestSkipsUnmapped(t *testing.T) {
 	sender := &fakeMatrixReactionSender{}
-	store := &fakeTeamsReactionStateStore{}
-	ingestor := &TeamsReactionIngestor{
-		Sender:    sender,
-		Messages:  &fakeTeamsMessageMapLookup{},
-		Reactions: store,
-		Log:       zerolog.Nop(),
-	}
-	msg := model.RemoteMessage{
-		MessageID: "m1",
-		Reactions: []model.MessageReaction{
-			{EmotionKey: "unknown", Users: []model.MessageReactionUser{{MRI: "8:one"}}},
-		},
-	}
+	store := &fakeReactionStateStore{}
+	ingestor := &TeamsReactionIngestor{Sender: sender, Messages: &fakeTeamsMessageMapLookup{}, Reactions: store, Log: zerolog.Nop()}
+	msg := model.RemoteMessage{MessageID: "m1", Reactions: []model.MessageReaction{{EmotionKey: "unknown", Users: []model.MessageReactionUser{{MRI: "8:one"}}}}}
 	if err := ingestor.IngestMessageReactions(context.Background(), "t1", "!room", msg, "$target"); err != nil {
 		t.Fatalf("IngestMessageReactions failed: %v", err)
 	}
-	if len(sender.sent) != 0 || len(store.inserted) != 0 {
+	if len(sender.sent) != 0 || len(store.upserts) != 0 {
 		t.Fatalf("expected no sends for unmapped reaction")
 	}
 }
 
 func TestTeamsReactionIngestSkipsWhenNoTarget(t *testing.T) {
 	sender := &fakeMatrixReactionSender{}
-	store := &fakeTeamsReactionStateStore{}
-	ingestor := &TeamsReactionIngestor{
-		Sender:    sender,
-		Messages:  &fakeTeamsMessageMapLookup{},
-		Reactions: store,
-		Log:       zerolog.Nop(),
-	}
-	msg := model.RemoteMessage{
-		MessageID: "m1",
-		Reactions: []model.MessageReaction{
-			{EmotionKey: "like", Users: []model.MessageReactionUser{{MRI: "8:one"}}},
-		},
-	}
+	store := &fakeReactionStateStore{}
+	ingestor := &TeamsReactionIngestor{Sender: sender, Messages: &fakeTeamsMessageMapLookup{}, Reactions: store, Log: zerolog.Nop()}
+	msg := model.RemoteMessage{MessageID: "m1", Reactions: []model.MessageReaction{{EmotionKey: "like", Users: []model.MessageReactionUser{{MRI: "8:one"}}}}}
 	if err := ingestor.IngestMessageReactions(context.Background(), "t1", "!room", msg, ""); err != nil {
 		t.Fatalf("IngestMessageReactions failed: %v", err)
 	}
-	if len(sender.sent) != 0 || len(store.inserted) != 0 {
+	if len(sender.sent) != 0 || len(store.upserts) != 0 {
 		t.Fatalf("expected no sends when target missing")
+	}
+}
+
+func TestTeamsReactionIngestKeepsMapOnTransientRedactError(t *testing.T) {
+	sender := &fakeMatrixReactionSender{redactErr: errors.New("temporary")}
+	store := &fakeReactionStateStore{byKey: map[string]*database.ReactionMap{
+		"t1|msg/m1|8:one|like": {
+			ThreadID: "t1", TeamsMessageID: "msg/m1", TeamsUserID: "8:one", ReactionKey: "like", MatrixReactionEventID: "$reaction",
+		},
+	}}
+	ingestor := &TeamsReactionIngestor{Sender: sender, Messages: &fakeTeamsMessageMapLookup{}, Reactions: store, Log: zerolog.Nop()}
+	if err := ingestor.IngestMessageReactions(context.Background(), "t1", "!room", model.RemoteMessage{MessageID: "m1"}, ""); err != nil {
+		t.Fatalf("IngestMessageReactions failed: %v", err)
+	}
+	if len(store.deleted) != 0 {
+		t.Fatalf("expected no delete on transient error")
+	}
+}
+
+func TestTeamsReactionIngestDeletesOnNotFoundRedact(t *testing.T) {
+	sender := &fakeMatrixReactionSender{redactErr: mautrix.MNotFound}
+	store := &fakeReactionStateStore{byKey: map[string]*database.ReactionMap{
+		"t1|msg/m1|8:one|like": {
+			ThreadID: "t1", TeamsMessageID: "msg/m1", TeamsUserID: "8:one", ReactionKey: "like", MatrixReactionEventID: "$reaction",
+		},
+	}}
+	ingestor := &TeamsReactionIngestor{Sender: sender, Messages: &fakeTeamsMessageMapLookup{}, Reactions: store, Log: zerolog.Nop()}
+	if err := ingestor.IngestMessageReactions(context.Background(), "t1", "!room", model.RemoteMessage{MessageID: "m1"}, ""); err != nil {
+		t.Fatalf("IngestMessageReactions failed: %v", err)
+	}
+	if len(store.deleted) != 1 {
+		t.Fatalf("expected delete on M_NOT_FOUND")
 	}
 }

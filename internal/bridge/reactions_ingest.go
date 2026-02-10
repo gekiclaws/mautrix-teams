@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/rs/zerolog"
 	"maunium.net/go/mautrix"
-	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
 
 	"go.mau.fi/mautrix-teams/database"
@@ -15,53 +15,15 @@ import (
 )
 
 type MatrixReactionSender interface {
-	SendReaction(roomID id.RoomID, target id.EventID, key string) (id.EventID, error)
-	Redact(roomID id.RoomID, eventID id.EventID) (id.EventID, error)
+	SendReactionAsTeamsUser(roomID id.RoomID, target id.EventID, key string, teamsUserID string) (id.EventID, error)
+	RedactReactionAsTeamsUser(roomID id.RoomID, eventID id.EventID, teamsUserID string) error
 }
 
-type BotMatrixReactionSender struct {
-	Client *mautrix.Client
-}
-
-func (s *BotMatrixReactionSender) SendReaction(roomID id.RoomID, target id.EventID, key string) (id.EventID, error) {
-	if s == nil || s.Client == nil {
-		return "", errors.New("missing matrix client")
-	}
-	content := event.ReactionEventContent{
-		RelatesTo: event.RelatesTo{
-			Type:    event.RelAnnotation,
-			EventID: target,
-			Key:     key,
-		},
-	}
-	wrapped := event.Content{
-		Parsed: &content,
-		Raw: map[string]any{
-			"com.beeper.teams.ingested_reaction": true,
-		},
-	}
-	resp, err := s.Client.SendMessageEvent(roomID, event.EventReaction, &wrapped)
-	if err != nil {
-		return "", err
-	}
-	return resp.EventID, nil
-}
-
-func (s *BotMatrixReactionSender) Redact(roomID id.RoomID, eventID id.EventID) (id.EventID, error) {
-	if s == nil || s.Client == nil {
-		return "", errors.New("missing matrix client")
-	}
-	resp, err := s.Client.RedactEvent(roomID, eventID)
-	if err != nil {
-		return "", err
-	}
-	return resp.EventID, nil
-}
-
-type TeamsReactionStateStore interface {
-	ListByMessage(threadID string, teamsMessageID string) ([]*database.TeamsReactionState, error)
-	Insert(state *database.TeamsReactionState) error
-	Delete(threadID string, teamsMessageID string, emotionKey string, userMRI string) error
+type ReactionMapStore interface {
+	GetByKey(threadID string, teamsMessageID string, teamsUserID string, reactionKey string) *database.ReactionMap
+	ListByMessage(threadID string, teamsMessageID string) ([]*database.ReactionMap, error)
+	Upsert(mapping *database.ReactionMap) error
+	DeleteByKey(threadID string, teamsMessageID string, teamsUserID string, reactionKey string) error
 }
 
 type TeamsMessageMapLookup interface {
@@ -71,7 +33,7 @@ type TeamsMessageMapLookup interface {
 type TeamsReactionIngestor struct {
 	Sender    MatrixReactionSender
 	Messages  TeamsMessageMapLookup
-	Reactions TeamsReactionStateStore
+	Reactions ReactionMapStore
 	Log       zerolog.Logger
 }
 
@@ -83,7 +45,7 @@ func (r *TeamsReactionIngestor) IngestMessageReactions(ctx context.Context, thre
 		return errors.New("missing message map lookup")
 	}
 	if r.Reactions == nil {
-		return errors.New("missing reaction state store")
+		return errors.New("missing reaction map store")
 	}
 	if threadID == "" {
 		return errors.New("missing thread id")
@@ -96,19 +58,19 @@ func (r *TeamsReactionIngestor) IngestMessageReactions(ctx context.Context, thre
 		return errors.New("missing teams message id")
 	}
 
-	current, timestamps := buildReactionSet(msg.Reactions)
+	current, timestamps := buildReactionSet(threadID, teamsMessageID, msg.Reactions)
 	existing, err := r.Reactions.ListByMessage(threadID, teamsMessageID)
 	if err != nil {
 		return err
 	}
 
-	existingMap := make(map[string]*database.TeamsReactionState, len(existing))
+	existingMap := make(map[ReactionKey]*database.ReactionMap, len(existing))
 	for _, state := range existing {
 		if state == nil {
 			continue
 		}
-		key := reactionKey(state.EmotionKey, state.UserMRI)
-		if key == "" {
+		key, ok := NewReactionKey(state.ThreadID, state.TeamsMessageID, state.TeamsUserID, state.ReactionKey)
+		if !ok {
 			continue
 		}
 		existingMap[key] = state
@@ -121,53 +83,56 @@ func (r *TeamsReactionIngestor) IngestMessageReactions(ctx context.Context, thre
 		}
 	}
 
-	for key, reaction := range current {
+	for key := range current {
 		if _, ok := existingMap[key]; ok {
 			continue
 		}
 		if target == "" {
-			r.Log.Info().
-				Str("thread_id", threadID).
-				Str("teams_message_id", teamsMessageID).
-				Str("emotion_key", reaction.EmotionKey).
-				Str("user_mri", reaction.UserMRI).
+			r.Log.Warn().
+				Str("thread_id", key.ThreadID).
+				Str("teams_message_id", key.TeamsMessageID).
+				Str("teams_user_id", key.TeamsUserID).
+				Str("reaction_key", key.ReactionKey).
 				Msg("reaction dropped: no target mxid")
 			continue
 		}
-		emoji, ok := MapEmotionKeyToEmoji(reaction.EmotionKey)
+		emoji, ok := MapEmotionKeyToEmoji(key.ReactionKey)
 		if !ok {
 			r.Log.Info().
-				Str("thread_id", threadID).
-				Str("teams_message_id", teamsMessageID).
-				Str("emotion_key", reaction.EmotionKey).
-				Str("user_mri", reaction.UserMRI).
+				Str("thread_id", key.ThreadID).
+				Str("teams_message_id", key.TeamsMessageID).
+				Str("teams_user_id", key.TeamsUserID).
+				Str("reaction_key", key.ReactionKey).
 				Msg("reaction dropped: unmapped emotion key")
 			continue
 		}
 		log := r.Log.With().
-			Str("thread_id", threadID).
-			Str("teams_message_id", teamsMessageID).
-			Str("emotion_key", reaction.EmotionKey).
-			Str("user_mri", reaction.UserMRI).
+			Str("thread_id", key.ThreadID).
+			Str("teams_message_id", key.TeamsMessageID).
+			Str("teams_user_id", key.TeamsUserID).
+			Str("reaction_key", key.ReactionKey).
 			Str("target_mxid", target.String()).
 			Logger()
 		if ts := timestamps[key]; ts != 0 {
 			log = log.With().Int64("time_ms", ts).Logger()
 		}
 		log.Info().Msg("matrix reaction add attempt")
-		eventID, err := r.Sender.SendReaction(roomID, target, emoji)
+		eventID, err := r.Sender.SendReactionAsTeamsUser(roomID, target, emoji, key.TeamsUserID)
 		if err != nil {
 			log.Error().Err(err).Msg("matrix reaction add failed")
 			continue
 		}
-		if err := r.Reactions.Insert(&database.TeamsReactionState{
-			ThreadID:       threadID,
-			TeamsMessageID: teamsMessageID,
-			EmotionKey:     reaction.EmotionKey,
-			UserMRI:        reaction.UserMRI,
-			MatrixEventID:  eventID,
+		if err := r.Reactions.Upsert(&database.ReactionMap{
+			ThreadID:              key.ThreadID,
+			TeamsMessageID:        key.TeamsMessageID,
+			TeamsUserID:           key.TeamsUserID,
+			ReactionKey:           key.ReactionKey,
+			MatrixRoomID:          roomID,
+			MatrixTargetEventID:   target,
+			MatrixReactionEventID: eventID,
+			UpdatedTSMS:           time.Now().UTC().UnixMilli(),
 		}); err != nil {
-			log.Error().Err(err).Msg("failed to persist teams reaction state")
+			log.Error().Err(err).Msg("failed to persist reaction map")
 		} else {
 			log.Info().Str("reaction_mxid", eventID.String()).Msg("matrix reaction added")
 		}
@@ -177,23 +142,29 @@ func (r *TeamsReactionIngestor) IngestMessageReactions(ctx context.Context, thre
 		if _, ok := current[key]; ok {
 			continue
 		}
-		if state.MatrixEventID == "" {
+		if state.MatrixReactionEventID == "" {
 			continue
 		}
 		log := r.Log.With().
-			Str("thread_id", threadID).
-			Str("teams_message_id", teamsMessageID).
-			Str("emotion_key", state.EmotionKey).
-			Str("user_mri", state.UserMRI).
-			Str("reaction_mxid", state.MatrixEventID.String()).
+			Str("thread_id", key.ThreadID).
+			Str("teams_message_id", key.TeamsMessageID).
+			Str("teams_user_id", key.TeamsUserID).
+			Str("reaction_key", key.ReactionKey).
+			Str("reaction_mxid", state.MatrixReactionEventID.String()).
 			Logger()
 		log.Info().Msg("matrix reaction remove attempt")
-		if _, err := r.Sender.Redact(roomID, state.MatrixEventID); err != nil {
+		if err := r.Sender.RedactReactionAsTeamsUser(roomID, state.MatrixReactionEventID, key.TeamsUserID); err != nil {
+			if errors.Is(err, mautrix.MNotFound) {
+				if deleteErr := r.Reactions.DeleteByKey(key.ThreadID, key.TeamsMessageID, key.TeamsUserID, key.ReactionKey); deleteErr != nil {
+					log.Error().Err(deleteErr).Msg("failed to delete reaction map after m_not_found")
+				}
+				continue
+			}
 			log.Error().Err(err).Msg("matrix reaction remove failed")
 			continue
 		}
-		if err := r.Reactions.Delete(threadID, teamsMessageID, state.EmotionKey, state.UserMRI); err != nil {
-			log.Error().Err(err).Msg("failed to delete teams reaction state")
+		if err := r.Reactions.DeleteByKey(key.ThreadID, key.TeamsMessageID, key.TeamsUserID, key.ReactionKey); err != nil {
+			log.Error().Err(err).Msg("failed to delete reaction map")
 		} else {
 			log.Info().Msg("matrix reaction removed")
 		}
@@ -202,42 +173,24 @@ func (r *TeamsReactionIngestor) IngestMessageReactions(ctx context.Context, thre
 	return nil
 }
 
-type reactionIdentity struct {
-	EmotionKey string
-	UserMRI    string
-}
-
-func buildReactionSet(reactions []model.MessageReaction) (map[string]reactionIdentity, map[string]int64) {
-	current := map[string]reactionIdentity{}
-	timestamps := map[string]int64{}
+func buildReactionSet(threadID string, teamsMessageID string, reactions []model.MessageReaction) (map[ReactionKey]struct{}, map[ReactionKey]int64) {
+	current := map[ReactionKey]struct{}{}
+	timestamps := map[ReactionKey]int64{}
 	for _, reaction := range reactions {
 		emotionKey := strings.TrimSpace(reaction.EmotionKey)
 		if emotionKey == "" {
 			continue
 		}
 		for _, user := range reaction.Users {
-			userMRI := strings.TrimSpace(user.MRI)
-			if userMRI == "" {
+			key, ok := NewReactionKey(threadID, teamsMessageID, user.MRI, emotionKey)
+			if !ok {
 				continue
 			}
-			key := reactionKey(emotionKey, userMRI)
-			if key == "" {
-				continue
-			}
-			current[key] = reactionIdentity{EmotionKey: emotionKey, UserMRI: userMRI}
+			current[key] = struct{}{}
 			if user.TimeMS != 0 {
 				timestamps[key] = user.TimeMS
 			}
 		}
 	}
 	return current, timestamps
-}
-
-func reactionKey(emotionKey string, userMRI string) string {
-	emotionKey = strings.TrimSpace(emotionKey)
-	userMRI = strings.TrimSpace(userMRI)
-	if emotionKey == "" || userMRI == "" {
-		return ""
-	}
-	return emotionKey + "\x00" + userMRI
 }

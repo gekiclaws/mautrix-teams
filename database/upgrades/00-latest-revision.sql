@@ -1,4 +1,4 @@
--- v0 -> v35 (compatible with v19+): Latest revision
+-- v0 -> v36 (compatible with v19+): Latest revision
 
 CREATE TABLE guild (
     dcid       TEXT PRIMARY KEY,
@@ -92,19 +92,16 @@ CREATE TABLE teams_message_map (
     sender_id TEXT
 );
 
-CREATE TABLE teams_reaction_map (
-    reaction_mxid TEXT PRIMARY KEY,
-    target_mxid TEXT NOT NULL,
-    emotion_key TEXT NOT NULL
-);
-
-CREATE TABLE teams_reaction (
+CREATE TABLE reaction_map (
     thread_id TEXT NOT NULL,
     teams_message_id TEXT NOT NULL,
-    emotion_key TEXT NOT NULL,
-    user_mri TEXT NOT NULL,
-    matrix_event_id TEXT NOT NULL,
-    PRIMARY KEY (thread_id, teams_message_id, emotion_key, user_mri)
+    teams_user_id TEXT NOT NULL,
+    reaction_key TEXT NOT NULL,
+    matrix_room_id TEXT NOT NULL,
+    matrix_target_event_id TEXT NOT NULL,
+    matrix_reaction_event_id TEXT NOT NULL,
+    updated_ts_ms BIGINT NOT NULL,
+    PRIMARY KEY (thread_id, teams_message_id, teams_user_id, reaction_key)
 );
 
 CREATE TABLE teams_consumption_horizon (
@@ -232,5 +229,6 @@ CREATE TABLE discord_file (
 );
 
 CREATE INDEX teams_message_map_thread_ts_idx ON teams_message_map (thread_id, message_ts);
+CREATE INDEX reaction_map_matrix_event_idx ON reaction_map (matrix_room_id, matrix_reaction_event_id);
 
 CREATE INDEX discord_file_mxc_idx ON discord_file (mxc);

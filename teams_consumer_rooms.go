@@ -132,9 +132,9 @@ func (br *TeamsBridge) runTeamsConsumerMessageSync(ctx context.Context, log zero
 		SelfUserID:    state.TeamsUserID,
 		UnreadTracker: br.TeamsUnreadCycles,
 		ReactionIngestor: &teamsbridge.TeamsReactionIngestor{
-			Sender:    &teamsbridge.BotMatrixReactionSender{Client: br.Bot.Client},
+			Sender:    &TeamsVirtualUserReactionSender{Bridge: br},
 			Messages:  br.DB.TeamsMessageMap,
-			Reactions: br.DB.TeamsReaction,
+			Reactions: br.DB.ReactionMap,
 			Log:       log,
 		},
 		Log: log,
@@ -430,7 +430,7 @@ func (br *TeamsBridge) initTeamsConsumerSender(log zerolog.Logger) error {
 		br.TeamsUnreadCycles = teamsbridge.NewUnreadCycleTracker()
 	}
 	br.TeamsConsumerSender = teamsbridge.NewTeamsConsumerSender(consumer, br.DB.TeamsSendIntent, store, state.TeamsUserID, log)
-	br.TeamsConsumerReactor = teamsbridge.NewTeamsConsumerReactor(consumer, store, br.DB.TeamsMessageMap, br.DB.TeamsReactionMap, log)
+	br.TeamsConsumerReactor = teamsbridge.NewTeamsConsumerReactor(consumer, store, br.DB.TeamsMessageMap, br.DB.ReactionMap, state.TeamsUserID, log)
 	br.TeamsConsumerTyper = teamsbridge.NewTeamsConsumerTyper(consumer, store, state.TeamsUserID, log)
 	br.TeamsConsumerReceipt = teamsbridge.NewTeamsConsumerReceiptSender(consumer, store, br.TeamsUnreadCycles, log)
 	return nil

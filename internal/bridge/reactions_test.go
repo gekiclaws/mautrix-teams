@@ -64,30 +64,54 @@ func (f *fakeMessageMapStore) GetByMXID(mxid id.EventID) *database.TeamsMessageM
 }
 
 type fakeReactionMapStore struct {
-	byReaction map[id.EventID]*database.TeamsReactionMap
-	inserted   []*database.TeamsReactionMap
-	deleted    []id.EventID
+	byKey      map[string]*database.ReactionMap
+	byReaction map[string]*database.ReactionMap
+	upserts    []*database.ReactionMap
+	deleted    []string
 }
 
-func (f *fakeReactionMapStore) GetByReactionMXID(mxid id.EventID) *database.TeamsReactionMap {
+func reactionMapKey(threadID, teamsMessageID, teamsUserID, reactionKey string) string {
+	return threadID + "|" + teamsMessageID + "|" + teamsUserID + "|" + reactionKey
+}
+
+func reactionMapEventKey(roomID id.RoomID, eventID id.EventID) string {
+	return roomID.String() + "|" + eventID.String()
+}
+
+func (f *fakeReactionMapStore) GetByKey(threadID string, teamsMessageID string, teamsUserID string, reactionKey string) *database.ReactionMap {
+	if f == nil || f.byKey == nil {
+		return nil
+	}
+	return f.byKey[reactionMapKey(threadID, teamsMessageID, teamsUserID, reactionKey)]
+}
+
+func (f *fakeReactionMapStore) GetByMatrixReaction(roomID id.RoomID, reactionEventID id.EventID) *database.ReactionMap {
 	if f == nil || f.byReaction == nil {
 		return nil
 	}
-	return f.byReaction[mxid]
+	return f.byReaction[reactionMapEventKey(roomID, reactionEventID)]
 }
 
-func (f *fakeReactionMapStore) Insert(mapping *database.TeamsReactionMap) error {
-	f.inserted = append(f.inserted, mapping)
-	if f.byReaction == nil {
-		f.byReaction = make(map[id.EventID]*database.TeamsReactionMap)
+func (f *fakeReactionMapStore) Upsert(mapping *database.ReactionMap) error {
+	if f.byKey == nil {
+		f.byKey = make(map[string]*database.ReactionMap)
 	}
-	f.byReaction[mapping.ReactionMXID] = mapping
+	if f.byReaction == nil {
+		f.byReaction = make(map[string]*database.ReactionMap)
+	}
+	f.upserts = append(f.upserts, mapping)
+	f.byKey[reactionMapKey(mapping.ThreadID, mapping.TeamsMessageID, mapping.TeamsUserID, mapping.ReactionKey)] = mapping
+	f.byReaction[reactionMapEventKey(mapping.MatrixRoomID, mapping.MatrixReactionEventID)] = mapping
 	return nil
 }
 
-func (f *fakeReactionMapStore) Delete(reactionMXID id.EventID) error {
-	f.deleted = append(f.deleted, reactionMXID)
-	delete(f.byReaction, reactionMXID)
+func (f *fakeReactionMapStore) DeleteByKey(threadID string, teamsMessageID string, teamsUserID string, reactionKey string) error {
+	key := reactionMapKey(threadID, teamsMessageID, teamsUserID, reactionKey)
+	f.deleted = append(f.deleted, key)
+	if mapping := f.byKey[key]; mapping != nil {
+		delete(f.byReaction, reactionMapEventKey(mapping.MatrixRoomID, mapping.MatrixReactionEventID))
+	}
+	delete(f.byKey, key)
 	return nil
 }
 
@@ -97,7 +121,7 @@ func TestTeamsConsumerReactorAddSuccess(t *testing.T) {
 		"$target": {MXID: "$target", ThreadID: "19:abc@thread.v2", TeamsMessageID: "1"},
 	}}
 	reactions := &fakeReactionMapStore{}
-	reactor := NewTeamsConsumerReactor(client, fakeThreadLookup{threadID: "19:abc@thread.v2", ok: true}, messages, reactions, zerolog.Nop())
+	reactor := NewTeamsConsumerReactor(client, fakeThreadLookup{threadID: "19:abc@thread.v2", ok: true}, messages, reactions, "8:live:me", zerolog.Nop())
 
 	evt := &event.Event{
 		ID:   id.EventID("$reaction"),
@@ -122,18 +146,26 @@ func TestTeamsConsumerReactorAddSuccess(t *testing.T) {
 	if call.appliedAtMS == 0 {
 		t.Fatalf("expected applied timestamp")
 	}
-	if len(reactions.inserted) != 1 {
-		t.Fatalf("expected reaction map insert, got %d", len(reactions.inserted))
+	if len(reactions.upserts) != 1 {
+		t.Fatalf("expected reaction map upsert, got %d", len(reactions.upserts))
+	}
+	stored := reactions.upserts[0]
+	if stored.TeamsUserID != "8:live:me" || stored.TeamsMessageID != "msg/1" {
+		t.Fatalf("unexpected mapping: %#v", stored)
 	}
 }
 
-func TestTeamsConsumerReactorAddUnmapped(t *testing.T) {
+func TestTeamsConsumerReactorAddSkipsIfMapped(t *testing.T) {
 	client := &fakeReactionClient{addStatus: 200}
 	messages := &fakeMessageMapStore{byMXID: map[id.EventID]*database.TeamsMessageMap{
-		"$target": {MXID: "$target", ThreadID: "19:abc@thread.v2", TeamsMessageID: "m1"},
+		"$target": {MXID: "$target", ThreadID: "19:abc@thread.v2", TeamsMessageID: "msg/1"},
 	}}
-	reactions := &fakeReactionMapStore{}
-	reactor := NewTeamsConsumerReactor(client, fakeThreadLookup{threadID: "19:abc@thread.v2", ok: true}, messages, reactions, zerolog.Nop())
+	reactions := &fakeReactionMapStore{byKey: map[string]*database.ReactionMap{
+		reactionMapKey("19:abc@thread.v2", "msg/1", "8:live:me", "like"): {
+			ThreadID: "19:abc@thread.v2", TeamsMessageID: "msg/1", TeamsUserID: "8:live:me", ReactionKey: "like",
+		},
+	}}
+	reactor := NewTeamsConsumerReactor(client, fakeThreadLookup{threadID: "19:abc@thread.v2", ok: true}, messages, reactions, "8:live:me", zerolog.Nop())
 
 	evt := &event.Event{
 		ID:   id.EventID("$reaction"),
@@ -141,7 +173,7 @@ func TestTeamsConsumerReactorAddUnmapped(t *testing.T) {
 		Content: event.Content{Parsed: &event.ReactionEventContent{RelatesTo: event.RelatesTo{
 			Type:    event.RelAnnotation,
 			EventID: "$target",
-			Key:     "❓",
+			Key:     "👍",
 		}}},
 	}
 
@@ -151,20 +183,20 @@ func TestTeamsConsumerReactorAddUnmapped(t *testing.T) {
 	if len(client.addCalls) != 0 {
 		t.Fatalf("expected no add call, got %d", len(client.addCalls))
 	}
-	if len(reactions.inserted) != 0 {
-		t.Fatalf("expected no reaction map insert, got %d", len(reactions.inserted))
+	if len(reactions.upserts) != 0 {
+		t.Fatalf("expected no upserts, got %d", len(reactions.upserts))
 	}
 }
 
 func TestTeamsConsumerReactorRemoveSuccess(t *testing.T) {
 	client := &fakeReactionClient{removeStatus: 200}
-	messages := &fakeMessageMapStore{byMXID: map[id.EventID]*database.TeamsMessageMap{
-		"$target": {MXID: "$target", ThreadID: "19:abc@thread.v2", TeamsMessageID: "1"},
+	reactions := &fakeReactionMapStore{byReaction: map[string]*database.ReactionMap{
+		reactionMapEventKey("!room:example", "$reaction"): {
+			ThreadID: "19:abc@thread.v2", TeamsMessageID: "msg/1", TeamsUserID: "8:live:me", ReactionKey: "like",
+			MatrixRoomID: "!room:example", MatrixTargetEventID: "$target", MatrixReactionEventID: "$reaction",
+		},
 	}}
-	reactions := &fakeReactionMapStore{byReaction: map[id.EventID]*database.TeamsReactionMap{
-		"$reaction": {ReactionMXID: "$reaction", TargetMXID: "$target", EmotionKey: "like"},
-	}}
-	reactor := NewTeamsConsumerReactor(client, fakeThreadLookup{threadID: "19:abc@thread.v2", ok: true}, messages, reactions, zerolog.Nop())
+	reactor := NewTeamsConsumerReactor(client, fakeThreadLookup{threadID: "19:abc@thread.v2", ok: true}, &fakeMessageMapStore{}, reactions, "8:live:me", zerolog.Nop())
 
 	evt := &event.Event{
 		ID:      id.EventID("$redaction"),
@@ -182,50 +214,27 @@ func TestTeamsConsumerReactorRemoveSuccess(t *testing.T) {
 	if call.threadID != "19:abc@thread.v2" || call.teamsMessageID != "1" || call.emotionKey != "like" {
 		t.Fatalf("unexpected remove call: %#v", call)
 	}
-	if len(reactions.deleted) != 1 || reactions.deleted[0] != "$reaction" {
+	if len(reactions.deleted) != 1 || reactions.deleted[0] != reactionMapKey("19:abc@thread.v2", "msg/1", "8:live:me", "like") {
 		t.Fatalf("unexpected delete calls: %#v", reactions.deleted)
 	}
 }
 
-func TestTeamsConsumerReactorRemoveMissingMessage(t *testing.T) {
-	client := &fakeReactionClient{removeStatus: 200}
-	reactions := &fakeReactionMapStore{byReaction: map[id.EventID]*database.TeamsReactionMap{
-		"$reaction": {ReactionMXID: "$reaction", TargetMXID: "$target", EmotionKey: "like"},
-	}}
-	reactor := NewTeamsConsumerReactor(client, fakeThreadLookup{threadID: "19:abc@thread.v2", ok: true}, &fakeMessageMapStore{}, reactions, zerolog.Nop())
-
-	evt := &event.Event{ID: id.EventID("$redaction"), Type: event.EventRedaction, Redacts: id.EventID("$reaction")}
-
-	if err := reactor.RemoveMatrixReaction(context.Background(), "!room:example", evt); err != nil {
-		t.Fatalf("RemoveMatrixReaction failed: %v", err)
-	}
-	if len(client.removeCalls) != 0 {
-		t.Fatalf("expected no remove call, got %d", len(client.removeCalls))
-	}
-	if len(reactions.deleted) != 0 {
-		t.Fatalf("expected no delete calls, got %d", len(reactions.deleted))
-	}
-}
-
-func TestTeamsConsumerReactorSkipsTeamsIngestedReactionEcho(t *testing.T) {
+func TestTeamsConsumerReactorAddUnmapped(t *testing.T) {
 	client := &fakeReactionClient{addStatus: 200}
 	messages := &fakeMessageMapStore{byMXID: map[id.EventID]*database.TeamsMessageMap{
-		"$target": {MXID: "$target", ThreadID: "19:abc@thread.v2", TeamsMessageID: "1"},
+		"$target": {MXID: "$target", ThreadID: "19:abc@thread.v2", TeamsMessageID: "m1"},
 	}}
 	reactions := &fakeReactionMapStore{}
-	reactor := NewTeamsConsumerReactor(client, fakeThreadLookup{threadID: "19:abc@thread.v2", ok: true}, messages, reactions, zerolog.Nop())
+	reactor := NewTeamsConsumerReactor(client, fakeThreadLookup{threadID: "19:abc@thread.v2", ok: true}, messages, reactions, "8:live:me", zerolog.Nop())
 
 	evt := &event.Event{
-		ID:     id.EventID("$reaction"),
-		Sender: id.UserID("@bot:example"),
-		Type:   event.EventReaction,
+		ID:   id.EventID("$reaction"),
+		Type: event.EventReaction,
 		Content: event.Content{Parsed: &event.ReactionEventContent{RelatesTo: event.RelatesTo{
 			Type:    event.RelAnnotation,
 			EventID: "$target",
-			Key:     "👍",
-		}}, Raw: map[string]any{
-			"com.beeper.teams.ingested_reaction": true,
-		}},
+			Key:     "❓",
+		}}},
 	}
 
 	if err := reactor.AddMatrixReaction(context.Background(), "!room:example", evt); err != nil {
