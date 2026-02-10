@@ -88,9 +88,9 @@ func (r *TeamsReactionIngestor) IngestMessageReactions(ctx context.Context, thre
 	if threadID == "" {
 		return errors.New("missing thread id")
 	}
-	teamsMessageID := NormalizeTeamsReactionMessageID(msg.SequenceID)
+	teamsMessageID := NormalizeTeamsReactionMessageID(msg.MessageID)
 	if teamsMessageID == "" {
-		teamsMessageID = strings.TrimSpace(msg.MessageID)
+		teamsMessageID = NormalizeTeamsReactionMessageID(msg.SequenceID)
 	}
 	if teamsMessageID == "" {
 		return errors.New("missing teams message id")

@@ -343,7 +343,7 @@ func TestIngestThreadUsesCachedDisplayName(t *testing.T) {
 func TestIngestThreadUsesSendIntentMXIDForMessageMap(t *testing.T) {
 	lister := &fakeMessageLister{
 		messages: []model.RemoteMessage{
-			{SequenceID: "1", MessageID: "m1", ClientMessageID: "c1", Body: "one"},
+			{SequenceID: "1", MessageID: "msg/1", ClientMessageID: "c1", Body: "one"},
 		},
 	}
 	sender := &fakeMatrixSender{}

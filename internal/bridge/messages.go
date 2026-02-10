@@ -252,9 +252,9 @@ func (m *MessageIngestor) IngestThread(ctx context.Context, threadID string, con
 				Str("event_id", maybeMapMXID.String()).
 				Msg("teams message matched existing send intent, skipping matrix send")
 		}
-		teamsMessageID := NormalizeTeamsReactionMessageID(msg.SequenceID)
+		teamsMessageID := NormalizeTeamsReactionMessageID(msg.MessageID)
 		if teamsMessageID == "" {
-			teamsMessageID = strings.TrimSpace(msg.MessageID)
+			teamsMessageID = NormalizeTeamsReactionMessageID(msg.SequenceID)
 		}
 		if m.MessageMap != nil && teamsMessageID != "" && maybeMapMXID != "" {
 			var messageTS *int64
@@ -322,9 +322,9 @@ func (m *MessageIngestor) ingestReactions(ctx context.Context, threadID string, 
 		return
 	}
 	if err := m.ReactionIngestor.IngestMessageReactions(ctx, threadID, roomID, msg, targetMXID); err != nil {
-		teamsMessageID := NormalizeTeamsReactionMessageID(msg.SequenceID)
+		teamsMessageID := NormalizeTeamsReactionMessageID(msg.MessageID)
 		if teamsMessageID == "" {
-			teamsMessageID = msg.MessageID
+			teamsMessageID = NormalizeTeamsReactionMessageID(msg.SequenceID)
 		}
 		m.Log.Error().
 			Err(err).

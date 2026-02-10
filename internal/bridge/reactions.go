@@ -49,6 +49,11 @@ func NewTeamsConsumerReactor(client ReactionClient, threads ThreadLookup, messag
 }
 
 var emojiToEmotionKey = map[string]string{
+	variationselector.FullyQualify("👍🏻"): "like",
+	variationselector.FullyQualify("👌🏻"): "ok",
+	variationselector.FullyQualify("🔥"):  "fire",
+	variationselector.FullyQualify("💙"):  "heartblue",
+
 	// Page 1
 	variationselector.FullyQualify("🙂"):  "smile",
 	variationselector.FullyQualify("😄"):  "laugh",
@@ -192,6 +197,14 @@ func NormalizeTeamsReactionMessageID(value string) string {
 	return value
 }
 
+func NormalizeTeamsReactionTargetMessageID(value string) string {
+	normalized := NormalizeTeamsReactionMessageID(value)
+	if strings.HasPrefix(normalized, "msg/") {
+		return strings.TrimPrefix(normalized, "msg/")
+	}
+	return normalized
+}
+
 func isTeamsIngestedReaction(evt *event.Event) bool {
 	if evt == nil {
 		return false
@@ -272,7 +285,7 @@ func (r *TeamsConsumerReactor) AddMatrixReaction(ctx context.Context, roomID id.
 			Msg("reaction dropped: no teams_message_id for target mxid")
 		return nil
 	}
-	teamsMessageID := NormalizeTeamsReactionMessageID(mapping.TeamsMessageID)
+	teamsMessageID := NormalizeTeamsReactionTargetMessageID(mapping.TeamsMessageID)
 	r.Log.Info().
 		Str("room_id", roomID.String()).
 		Str("event_id", evt.ID.String()).
@@ -354,7 +367,7 @@ func (r *TeamsConsumerReactor) RemoveMatrixReaction(ctx context.Context, roomID 
 			Msg("reaction dropped: no teams_message_id for target mxid")
 		return nil
 	}
-	teamsMessageID := NormalizeTeamsReactionMessageID(mapping.TeamsMessageID)
+	teamsMessageID := NormalizeTeamsReactionTargetMessageID(mapping.TeamsMessageID)
 	r.Log.Info().
 		Str("room_id", roomID.String()).
 		Str("event_id", evt.ID.String()).
