@@ -52,11 +52,11 @@ func (portal *TeamsConsumerPortal) ReceiveMatrixEvent(user bridge.User, evt *eve
 	}
 	switch evt.Type {
 	case event.EventMessage:
-		portal.handleMatrixMessage(user.(*User), evt)
+		portal.handleMatrixMessage(user, evt)
 	case event.EventReaction:
-		portal.handleMatrixReaction(user.(*User), evt)
+		portal.handleMatrixReaction(user, evt)
 	case event.EventRedaction:
-		portal.handleMatrixRedaction(user.(*User), evt)
+		portal.handleMatrixRedaction(user, evt)
 	}
 }
 
@@ -113,7 +113,7 @@ func (portal *TeamsConsumerPortal) HandleMatrixReadReceipt(brUser bridge.User, e
 	}
 }
 
-func (portal *TeamsConsumerPortal) handleMatrixMessage(sender *User, evt *event.Event) {
+func (portal *TeamsConsumerPortal) handleMatrixMessage(sender bridge.User, evt *event.Event) {
 	if sender == nil || evt == nil {
 		return
 	}
@@ -145,7 +145,7 @@ func (portal *TeamsConsumerPortal) handleMatrixMessage(sender *User, evt *event.
 	}
 }
 
-func (portal *TeamsConsumerPortal) handleMatrixReaction(sender *User, evt *event.Event) {
+func (portal *TeamsConsumerPortal) handleMatrixReaction(sender bridge.User, evt *event.Event) {
 	if sender == nil || evt == nil {
 		return
 	}
@@ -159,7 +159,7 @@ func (portal *TeamsConsumerPortal) handleMatrixReaction(sender *User, evt *event
 	}
 }
 
-func (portal *TeamsConsumerPortal) handleMatrixRedaction(sender *User, evt *event.Event) {
+func (portal *TeamsConsumerPortal) handleMatrixRedaction(sender bridge.User, evt *event.Event) {
 	if sender == nil || evt == nil {
 		return
 	}
@@ -211,11 +211,11 @@ func (portal *TeamsConsumerPortal) writeMSSMetadata(evt *event.Event, status dat
 	return err
 }
 
-func (portal *TeamsConsumerPortal) intentMXIDForMSS(sender *User) id.UserID {
+func (portal *TeamsConsumerPortal) intentMXIDForMSS(sender bridge.User) id.UserID {
 	if sender == nil {
 		return ""
 	}
-	return sender.MXID
+	return sender.GetMXID()
 }
 
 func (portal *TeamsConsumerPortal) intentForMSS(clientMessageID string) *appservice.IntentAPI {

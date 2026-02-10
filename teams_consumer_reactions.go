@@ -34,11 +34,6 @@ func (br *DiscordBridge) HandleTeamsConsumerReaction(evt *event.Event) {
 		return
 	}
 
-	typedUser, ok := user.(*User)
-	if !ok {
-		return
-	}
-
 	portal := &TeamsConsumerPortal{bridge: br, roomID: evt.RoomID}
-	portal.handleMatrixReaction(typedUser, evt)
+	portal.ReceiveMatrixEvent(user, evt)
 }
