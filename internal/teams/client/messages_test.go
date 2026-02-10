@@ -267,6 +267,84 @@ func TestListMessagesEmotionsParsing(t *testing.T) {
 	}
 }
 
+func TestListMessagesFilesParsing(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"messages":[` +
+			`{"id":"m1","sequenceId":"1","content":{"text":"hello"},"properties":{"files":"[{\"fileName\":\"spec.pdf\",\"fileInfo\":{\"shareUrl\":\"https://example.test/share\",\"fileUrl\":\"https://example.test/download\"},\"fileType\":\"pdf\"}]"}}` +
+			`]}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client())
+	client.MessagesURL = server.URL + "/conversations"
+	client.Token = "token123"
+
+	msgs, err := client.ListMessages(context.Background(), "@oneToOne.skype", "")
+	if err != nil {
+		t.Fatalf("ListMessages failed: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("unexpected messages length: %d", len(msgs))
+	}
+	if msgs[0].PropertiesFiles == "" {
+		t.Fatalf("expected files payload")
+	}
+	attachments, ok := model.ParseAttachments(msgs[0].PropertiesFiles)
+	if !ok {
+		t.Fatalf("expected parsed attachments")
+	}
+	if len(attachments) != 1 || attachments[0].Filename != "spec.pdf" {
+		t.Fatalf("unexpected attachments: %#v", attachments)
+	}
+}
+
+func TestListMessagesMissingFilesProperty(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"messages":[{"id":"m1","sequenceId":"1","content":{"text":"hello"},"properties":{"emotions":[]}}]}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client())
+	client.MessagesURL = server.URL + "/conversations"
+	client.Token = "token123"
+
+	msgs, err := client.ListMessages(context.Background(), "@oneToOne.skype", "")
+	if err != nil {
+		t.Fatalf("ListMessages failed: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("unexpected messages length: %d", len(msgs))
+	}
+	if msgs[0].PropertiesFiles != "" {
+		t.Fatalf("expected empty files payload, got %q", msgs[0].PropertiesFiles)
+	}
+}
+
+func TestListMessagesMalformedPropertiesForFiles(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"messages":[{"id":"m1","sequenceId":"1","content":{"text":"hello"},"properties":"bad"}]}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client())
+	client.MessagesURL = server.URL + "/conversations"
+	client.Token = "token123"
+
+	msgs, err := client.ListMessages(context.Background(), "@oneToOne.skype", "")
+	if err != nil {
+		t.Fatalf("ListMessages failed: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("unexpected messages length: %d", len(msgs))
+	}
+	if msgs[0].PropertiesFiles != "" {
+		t.Fatalf("expected empty files payload, got %q", msgs[0].PropertiesFiles)
+	}
+}
+
 func TestSendMessageSuccess(t *testing.T) {
 	var gotPath string
 	var gotAuth string
