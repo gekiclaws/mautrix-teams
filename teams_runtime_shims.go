@@ -13,7 +13,7 @@ import (
 // Teams-only runtime user model.
 type User struct {
 	*database.User
-	bridge          *DiscordBridge
+	bridge          *TeamsBridge
 	PermissionLevel bridgeconfig.PermissionLevel
 }
 
@@ -30,7 +30,7 @@ func (user *User) GetCommandState() map[string]interface{}          { return nil
 func (user *User) GetIDoublePuppet() bridge.DoublePuppet            { return nil }
 func (user *User) GetIGhost() bridge.Ghost                          { return nil }
 
-func (br *DiscordBridge) loadUser(dbUser *database.User, mxid *id.UserID) *User {
+func (br *TeamsBridge) loadUser(dbUser *database.User, mxid *id.UserID) *User {
 	if dbUser == nil {
 		if mxid == nil || br.DB == nil || br.DB.User == nil {
 			return nil
@@ -48,7 +48,7 @@ func (br *DiscordBridge) loadUser(dbUser *database.User, mxid *id.UserID) *User 
 	return user
 }
 
-func (br *DiscordBridge) GetUserByMXID(userID id.UserID) *User {
+func (br *TeamsBridge) GetUserByMXID(userID id.UserID) *User {
 	if userID == br.Bot.UserID || br.IsGhost(userID) {
 		return nil
 	}
@@ -60,11 +60,11 @@ func (br *DiscordBridge) GetUserByMXID(userID id.UserID) *User {
 	return br.loadUser(br.DB.User.GetByMXID(userID), &userID)
 }
 
-func (br *DiscordBridge) GetPortalByMXID(mxid id.RoomID) *TeamsConsumerPortal {
+func (br *TeamsBridge) GetPortalByMXID(mxid id.RoomID) *TeamsConsumerPortal {
 	return nil
 }
 
-func (br *DiscordBridge) GetAllIPortals() []bridge.Portal {
+func (br *TeamsBridge) GetAllIPortals() []bridge.Portal {
 	if br == nil || br.DB == nil || br.DB.TeamsThread == nil {
 		return nil
 	}
@@ -79,9 +79,9 @@ func (br *DiscordBridge) GetAllIPortals() []bridge.Portal {
 	return portals
 }
 
-func (br *DiscordBridge) HandleTombstone(evt *event.Event) {}
+func (br *TeamsBridge) HandleTombstone(evt *event.Event) {}
 
-func (br *DiscordBridge) ParsePuppetMXID(mxid id.UserID) (string, bool) { return "", false }
+func (br *TeamsBridge) ParsePuppetMXID(mxid id.UserID) (string, bool) { return "", false }
 
 type Puppet struct{}
 
@@ -99,5 +99,5 @@ func (p *Puppet) GetMXID() id.UserID {
 	return ""
 }
 
-func (br *DiscordBridge) GetPuppetByMXID(mxid id.UserID) *Puppet { return nil }
-func (br *DiscordBridge) GetPuppetByCustomMXID(mxid id.UserID) *Puppet { return nil }
+func (br *TeamsBridge) GetPuppetByMXID(mxid id.UserID) *Puppet { return nil }
+func (br *TeamsBridge) GetPuppetByCustomMXID(mxid id.UserID) *Puppet { return nil }

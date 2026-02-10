@@ -15,7 +15,7 @@ import (
 func TestResolveTeamsAdminInviteMXIDsReturnsExplicitAdmins(t *testing.T) {
 	var buf bytes.Buffer
 	log := zerolog.New(&buf)
-	br := &DiscordBridge{
+	br := &TeamsBridge{
 		Config: &config.Config{
 			Bridge: config.BridgeConfig{
 				Permissions: bridgeconfig.PermissionConfig{
@@ -46,7 +46,7 @@ func TestResolveTeamsAdminInviteMXIDsReturnsExplicitAdmins(t *testing.T) {
 func TestResolveTeamsAdminInviteMXIDsWarnsOnceWithoutExplicitAdmins(t *testing.T) {
 	var buf bytes.Buffer
 	log := zerolog.New(&buf)
-	br := &DiscordBridge{
+	br := &TeamsBridge{
 		Config: &config.Config{
 			Bridge: config.BridgeConfig{
 				Permissions: bridgeconfig.PermissionConfig{

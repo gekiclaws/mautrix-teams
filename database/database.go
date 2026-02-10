@@ -16,14 +16,6 @@ type Database struct {
 	*dbutil.Database
 
 	User                    *UserQuery
-	Portal                  *PortalQuery
-	Puppet                  *PuppetQuery
-	Message                 *MessageQuery
-	Thread                  *ThreadQuery
-	Reaction                *ReactionQuery
-	Guild                   *GuildQuery
-	Role                    *RoleQuery
-	File                    *FileQuery
 	TeamsThread             *TeamsThreadQuery
 	TeamsProfile            *TeamsProfileQuery
 	TeamsSendIntent         *TeamsSendIntentQuery
@@ -39,38 +31,6 @@ func New(baseDB *dbutil.Database, log maulogger.Logger) *Database {
 	db.User = &UserQuery{
 		db:  db,
 		log: log.Sub("User"),
-	}
-	db.Portal = &PortalQuery{
-		db:  db,
-		log: log.Sub("Portal"),
-	}
-	db.Puppet = &PuppetQuery{
-		db:  db,
-		log: log.Sub("Puppet"),
-	}
-	db.Message = &MessageQuery{
-		db:  db,
-		log: log.Sub("Message"),
-	}
-	db.Thread = &ThreadQuery{
-		db:  db,
-		log: log.Sub("Thread"),
-	}
-	db.Reaction = &ReactionQuery{
-		db:  db,
-		log: log.Sub("Reaction"),
-	}
-	db.Guild = &GuildQuery{
-		db:  db,
-		log: log.Sub("Guild"),
-	}
-	db.Role = &RoleQuery{
-		db:  db,
-		log: log.Sub("Role"),
-	}
-	db.File = &FileQuery{
-		db:  db,
-		log: log.Sub("File"),
 	}
 	db.TeamsThread = &TeamsThreadQuery{
 		db:  db,

@@ -42,7 +42,7 @@ var (
 //go:embed example-config.yaml
 var ExampleConfig string
 
-type DiscordBridge struct {
+type TeamsBridge struct {
 	bridge.Bridge
 
 	Config *config.Config
@@ -64,11 +64,11 @@ type DiscordBridge struct {
 	teamsAdminInviteWarn sync.Once
 }
 
-func (br *DiscordBridge) GetExampleConfig() string {
+func (br *TeamsBridge) GetExampleConfig() string {
 	return ExampleConfig
 }
 
-func (br *DiscordBridge) GetConfigPtr() interface{} {
+func (br *TeamsBridge) GetConfigPtr() interface{} {
 	br.Config = &config.Config{
 		BaseConfig: &br.Bridge.Config,
 	}
@@ -76,7 +76,7 @@ func (br *DiscordBridge) GetConfigPtr() interface{} {
 	return br.Config
 }
 
-func (br *DiscordBridge) Init() {
+func (br *TeamsBridge) Init() {
 	br.CommandProcessor = commands.NewProcessor(&br.Bridge)
 	br.EventProcessor.On(event.StateTombstone, br.HandleTombstone)
 	br.EventProcessor.On(event.EventReaction, br.HandleTeamsConsumerReaction)
@@ -84,17 +84,17 @@ func (br *DiscordBridge) Init() {
 	br.DB = database.New(br.Bridge.DB, br.Log.Sub("Database"))
 }
 
-func (br *DiscordBridge) Start() {
+func (br *TeamsBridge) Start() {
 	br.WaitWebsocketConnected()
 	br.startTeamsConsumerRoomSync()
 	br.startTeamsConsumerMessageSync()
 	br.startTeamsConsumerSender()
 }
 
-func (br *DiscordBridge) Stop() {
+func (br *TeamsBridge) Stop() {
 }
 
-func (br *DiscordBridge) GetIPortal(mxid id.RoomID) bridge.Portal {
+func (br *TeamsBridge) GetIPortal(mxid id.RoomID) bridge.Portal {
 	p := br.GetPortalByMXID(mxid)
 	if p == nil {
 		if br.TeamsConsumerSender == nil || br.TeamsThreadStore == nil {
@@ -108,7 +108,7 @@ func (br *DiscordBridge) GetIPortal(mxid id.RoomID) bridge.Portal {
 	return p
 }
 
-func (br *DiscordBridge) GetIUser(mxid id.UserID, create bool) bridge.User {
+func (br *TeamsBridge) GetIUser(mxid id.UserID, create bool) bridge.User {
 	p := br.GetUserByMXID(mxid)
 	if p == nil {
 		return nil
@@ -116,12 +116,12 @@ func (br *DiscordBridge) GetIUser(mxid id.UserID, create bool) bridge.User {
 	return p
 }
 
-func (br *DiscordBridge) IsGhost(mxid id.UserID) bool {
+func (br *TeamsBridge) IsGhost(mxid id.UserID) bool {
 	_, isGhost := br.ParsePuppetMXID(mxid)
 	return isGhost
 }
 
-func (br *DiscordBridge) GetIGhost(mxid id.UserID) bridge.Ghost {
+func (br *TeamsBridge) GetIGhost(mxid id.UserID) bridge.Ghost {
 	p := br.GetPuppetByMXID(mxid)
 	if p == nil {
 		return nil
@@ -129,12 +129,12 @@ func (br *DiscordBridge) GetIGhost(mxid id.UserID) bridge.Ghost {
 	return p
 }
 
-func (br *DiscordBridge) CreatePrivatePortal(id id.RoomID, user bridge.User, ghost bridge.Ghost) {
+func (br *TeamsBridge) CreatePrivatePortal(id id.RoomID, user bridge.User, ghost bridge.Ghost) {
 	//TODO implement
 }
 
 func main() {
-	br := &DiscordBridge{
+	br := &TeamsBridge{
 		usersByMXID: make(map[id.UserID]*User),
 		usersByID:   make(map[string]*User),
 
