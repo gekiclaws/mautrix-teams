@@ -28,6 +28,9 @@ func (s *TeamsVirtualUserReadReceiptSender) SetReadMarkers(roomID id.RoomID, eve
 	if err = intent.EnsureJoined(roomID); err != nil {
 		return err
 	}
+	if err = s.Bridge.ensureTeamsVirtualUserMemberProfile(intent, roomID, teamsUserID); err != nil {
+		return err
+	}
 	return intent.SendReceipt(roomID, eventID, event.ReceiptTypeRead, map[string]any{})
 }
 
@@ -66,4 +69,39 @@ func (br *TeamsBridge) mxidForTeamsVirtualUser(teamsUserID string) id.UserID {
 		return ""
 	}
 	return id.NewUserID(localpart, homeserver)
+}
+
+func (br *TeamsBridge) ensureTeamsVirtualUserMemberProfile(intent *appservice.IntentAPI, roomID id.RoomID, teamsUserID string) error {
+	if br == nil || intent == nil {
+		return errors.New("missing member profile context")
+	}
+	displayname := br.teamsVirtualUserDisplayName(teamsUserID)
+	if displayname == "" {
+		return errors.New("missing teams virtual user displayname")
+	}
+	content := event.Content{
+		Parsed: &event.MemberEventContent{
+			Membership:  event.MembershipJoin,
+			Displayname: displayname,
+		},
+	}
+	_, err := intent.SendStateEvent(roomID, event.StateMember, intent.UserID.String(), &content)
+	return err
+}
+
+func (br *TeamsBridge) teamsVirtualUserDisplayName(teamsUserID string) string {
+	normalized := model.NormalizeTeamsUserID(teamsUserID)
+	if normalized == "" {
+		return ""
+	}
+	rawName := ""
+	if br != nil && br.DB != nil && br.DB.TeamsProfile != nil {
+		if profile := br.DB.TeamsProfile.GetByTeamsUserID(normalized); profile != nil {
+			rawName = strings.TrimSpace(profile.DisplayName)
+		}
+	}
+	if rawName == "" {
+		rawName = normalized
+	}
+	return rawName
 }
