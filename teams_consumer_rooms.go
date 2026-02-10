@@ -145,7 +145,7 @@ func (br *TeamsBridge) runTeamsConsumerMessageSync(ctx context.Context, log zero
 	}
 	if strings.TrimSpace(state.TeamsUserID) != "" {
 		readReceiptLog := log.With().Str("component", "teams-consumer-read-receipts").Logger()
-		readReceiptSender := &teamsbridge.BotMatrixReadMarkerSender{Client: br.Bot.Client}
+		readReceiptSender := &TeamsVirtualUserReadReceiptSender{Bridge: br}
 		consumerIngestor.ReadReceipts = teamsbridge.NewTeamsConsumptionHorizonIngestor(
 			consumer,
 			br.DB.TeamsMessageMap,
