@@ -17,14 +17,10 @@
 package main
 
 import (
-	"context"
 	_ "embed"
 	"net/http"
-	"os"
-	"strings"
 	"sync"
 
-	"github.com/rs/zerolog"
 	"go.mau.fi/util/configupgrade"
 	"go.mau.fi/util/exsync"
 	"golang.org/x/sync/semaphore"
@@ -36,9 +32,6 @@ import (
 	"go.mau.fi/mautrix-teams/config"
 	"go.mau.fi/mautrix-teams/database"
 	teamsbridge "go.mau.fi/mautrix-teams/internal/bridge"
-	"go.mau.fi/mautrix-teams/teams"
-	teamsauth "go.mau.fi/mautrix-teams/teams/auth"
-	"go.mau.fi/mautrix-teams/teams/poll"
 )
 
 // Information to find out exactly which commit the bridge was built from.
@@ -186,20 +179,6 @@ func (br *DiscordBridge) CreatePrivatePortal(id id.RoomID, user bridge.User, gho
 }
 
 func main() {
-	if handled, exitCode := runDevReadReceiptIfRequested(os.Args[1:]); handled {
-		os.Exit(exitCode)
-	}
-	if handled, exitCode := runDevTypingIfRequested(os.Args[1:]); handled {
-		os.Exit(exitCode)
-	}
-	if handled, exitCode := runDevSendIfRequested(os.Args[1:]); handled {
-		os.Exit(exitCode)
-	}
-	if handled, exitCode := runDevReactIfRequested(os.Args[1:]); handled {
-		os.Exit(exitCode)
-	}
-	runTeamsAuthTestIfRequested(os.Args)
-	runTeamsPollTestIfRequested(os.Args)
 	br := &DiscordBridge{
 		usersByMXID: make(map[id.UserID]*User),
 		usersByID:   make(map[string]*User),
@@ -244,78 +223,4 @@ func main() {
 	br.InitVersion(Tag, Commit, BuildTime)
 
 	br.Main()
-}
-
-func runTeamsAuthTestIfRequested(args []string) {
-	if !shouldRunTeamsAuthTest(args) && !envFlagEnabled("GO_TEAMS_AUTH_TEST") {
-		return
-	}
-	log := zerolog.New(os.Stdout).With().Timestamp().Str("component", "teams-auth-test").Logger()
-	if err := teamsauth.RunGraphAuthTest(context.Background(), log); err != nil {
-		log.Error().Err(err).Msg("Graph auth test failed")
-		os.Exit(1)
-	}
-	os.Exit(0)
-}
-
-func runTeamsPollTestIfRequested(args []string) {
-	if !shouldRunTeamsPollTest(args) && !envFlagEnabled("GO_TEAMS_POLL_TEST") {
-		return
-	}
-	log := zerolog.New(os.Stdout).With().Timestamp().Str("component", "teams-poll-test").Logger()
-
-	creds, err := teams.LoadGraphCredentialsFromEnv(".env")
-	if err != nil {
-		log.Error().Err(err).Msg("Failed to load Graph credentials")
-		os.Exit(1)
-	}
-	userID := os.Getenv(teams.EnvGraphUserID)
-	if userID == "" {
-		log.Error().Msg("Missing required env var: " + teams.EnvGraphUserID)
-		os.Exit(1)
-	}
-
-	client, err := teams.NewGraphClient(context.Background(), creds)
-	if err != nil {
-		log.Error().Err(err).Msg("Failed to create Graph client")
-		os.Exit(1)
-	}
-
-	poller := &poll.Poller{
-		GraphClient: client,
-		UserID:      userID,
-		Cursor:      make(map[string]string),
-	}
-	if err := poller.RunOnce(context.Background(), log); err != nil {
-		log.Error().Err(err).Msg("Teams poll test failed")
-		os.Exit(1)
-	}
-	os.Exit(0)
-}
-
-func envFlagEnabled(key string) bool {
-	value, ok := os.LookupEnv(key)
-	if !ok {
-		return false
-	}
-	value = strings.TrimSpace(strings.ToLower(value))
-	return value != "" && value != "0" && value != "false"
-}
-
-func shouldRunTeamsAuthTest(args []string) bool {
-	for _, arg := range args {
-		if strings.EqualFold(arg, "--teams-auth-test") {
-			return true
-		}
-	}
-	return false
-}
-
-func shouldRunTeamsPollTest(args []string) bool {
-	for _, arg := range args {
-		if strings.EqualFold(arg, "--teams-poll-test") {
-			return true
-		}
-	}
-	return false
 }
