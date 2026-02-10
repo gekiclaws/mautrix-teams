@@ -18,6 +18,7 @@ type RemoteMessage struct {
 	Timestamp        time.Time
 	Body             string
 	FormattedBody    string
+	PropertiesFiles  string
 	Reactions        []MessageReaction
 }
 

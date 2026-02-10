@@ -121,11 +121,12 @@ func (m *MessageIngestor) IngestThread(ctx context.Context, threadID string, con
 		m.ingestReactions(ctx, threadID, roomID, msg, targetMXID)
 	}
 	for _, msg := range messages {
+		attachments, hasAttachments := model.ParseAttachments(msg.PropertiesFiles)
 		if lastSequenceID != nil && model.CompareSequenceID(msg.SequenceID, *lastSequenceID) <= 0 {
 			ingestReactions(msg, "")
 			continue
 		}
-		if msg.Body == "" {
+		if msg.Body == "" && !hasAttachments {
 			m.Log.Debug().
 				Str("thread_id", threadID).
 				Str("seq", msg.SequenceID).
@@ -206,9 +207,13 @@ func (m *MessageIngestor) IngestThread(ctx context.Context, threadID string, con
 				"displayname": displayName,
 			}
 		}
-		if msg.FormattedBody != "" {
+		rendered := RenderInboundMessage(msg.Body, msg.FormattedBody, attachments)
+		if rendered.FormattedBody != "" {
 			extra["format"] = string(event.FormatHTML)
-			extra["formatted_body"] = msg.FormattedBody
+			extra["formatted_body"] = rendered.FormattedBody
+		}
+		for key, value := range rendered.Extra {
+			extra[key] = value
 		}
 		if len(extra) == 0 {
 			extra = nil
@@ -223,7 +228,7 @@ func (m *MessageIngestor) IngestThread(ctx context.Context, threadID string, con
 
 		maybeMapMXID := intentMXID
 		if maybeMapMXID == "" {
-			eventID, err := m.Sender.SendText(roomID, msg.Body, extra)
+			eventID, err := m.Sender.SendText(roomID, rendered.Body, extra)
 			if err != nil {
 				m.Log.Error().
 					Err(err).

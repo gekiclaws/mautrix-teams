@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -715,5 +716,118 @@ func TestIngestThreadAddsFormattedBodyFields(t *testing.T) {
 	}
 	if sender.extra[0]["formatted_body"] != "<p>hi</p><p>there</p>" {
 		t.Fatalf("unexpected formatted_body: %#v", sender.extra[0]["formatted_body"])
+	}
+}
+
+func TestIngestThreadAttachmentOnlyMessageSendsSingleEvent(t *testing.T) {
+	lister := &fakeMessageLister{
+		messages: []model.RemoteMessage{
+			{
+				SequenceID:      "1",
+				Body:            "",
+				PropertiesFiles: `[{"fileName":"spec.pdf","fileInfo":{"shareUrl":"https://example.test/share"}}]`,
+			},
+		},
+	}
+	sender := &fakeMatrixSender{}
+	ingestor := &MessageIngestor{
+		Lister: lister,
+		Sender: sender,
+		Log:    zerolog.New(io.Discard),
+	}
+
+	res, err := ingestor.IngestThread(context.Background(), "thread-1", "@oneToOne.skype", "!room:example", nil)
+	if err != nil {
+		t.Fatalf("IngestThread failed: %v", err)
+	}
+	if !res.Advanced || res.MessagesIngested != 1 {
+		t.Fatalf("expected one ingested message, got %#v", res)
+	}
+	if len(sender.sent) != 1 {
+		t.Fatalf("expected one send, got %#v", sender.sent)
+	}
+	if sender.sent[0] != "Attachment: spec.pdf - https://example.test/share" {
+		t.Fatalf("unexpected sent body: %q", sender.sent[0])
+	}
+	if len(sender.extra) != 1 {
+		t.Fatalf("expected one extra payload")
+	}
+	if sender.extra[0]["format"] != "org.matrix.custom.html" {
+		t.Fatalf("unexpected format: %#v", sender.extra[0]["format"])
+	}
+	formattedBody, _ := sender.extra[0]["formatted_body"].(string)
+	if !strings.Contains(formattedBody, `<a href="https://example.test/share">spec.pdf</a>`) {
+		t.Fatalf("unexpected formatted body: %q", formattedBody)
+	}
+}
+
+func TestIngestThreadTextPlusAttachmentSendsSingleEvent(t *testing.T) {
+	lister := &fakeMessageLister{
+		messages: []model.RemoteMessage{
+			{
+				SequenceID:      "1",
+				Body:            "hello",
+				PropertiesFiles: `[{"fileName":"spec.pdf","fileInfo":{"shareUrl":"https://example.test/share"}}]`,
+			},
+		},
+	}
+	sender := &fakeMatrixSender{}
+	ingestor := &MessageIngestor{
+		Lister: lister,
+		Sender: sender,
+		Log:    zerolog.New(io.Discard),
+	}
+
+	res, err := ingestor.IngestThread(context.Background(), "thread-1", "@oneToOne.skype", "!room:example", nil)
+	if err != nil {
+		t.Fatalf("IngestThread failed: %v", err)
+	}
+	if !res.Advanced || res.MessagesIngested != 1 {
+		t.Fatalf("expected one ingested message, got %#v", res)
+	}
+	if len(sender.sent) != 1 {
+		t.Fatalf("expected one send, got %#v", sender.sent)
+	}
+	if !strings.Contains(sender.sent[0], "hello") || !strings.Contains(sender.sent[0], "Attachment: spec.pdf - https://example.test/share") {
+		t.Fatalf("unexpected sent body: %q", sender.sent[0])
+	}
+	formattedBody, _ := sender.extra[0]["formatted_body"].(string)
+	if !strings.Contains(formattedBody, "hello") || !strings.Contains(formattedBody, `<a href="https://example.test/share">spec.pdf</a>`) {
+		t.Fatalf("unexpected formatted body: %q", formattedBody)
+	}
+}
+
+func TestIngestThreadAttachmentPresenceDoesNotAffectSequenceHandling(t *testing.T) {
+	lister := &fakeMessageLister{
+		messages: []model.RemoteMessage{
+			{
+				SequenceID:      "1",
+				Body:            "",
+				PropertiesFiles: `[{"fileName":"old.pdf","fileInfo":{"shareUrl":"https://example.test/old"}}]`,
+			},
+			{
+				SequenceID:      "2",
+				Body:            "current",
+				PropertiesFiles: `[{"fileName":"new.pdf","fileInfo":{"shareUrl":"https://example.test/new"}}]`,
+			},
+		},
+	}
+	sender := &fakeMatrixSender{}
+	ingestor := &MessageIngestor{
+		Lister: lister,
+		Sender: sender,
+		Log:    zerolog.New(io.Discard),
+	}
+
+	last := "1"
+	res, err := ingestor.IngestThread(context.Background(), "thread-1", "@oneToOne.skype", "!room:example", &last)
+	if err != nil {
+		t.Fatalf("IngestThread failed: %v", err)
+	}
+	if !res.Advanced || res.LastSequenceID != "2" || res.MessagesIngested != 1 {
+		t.Fatalf("unexpected ingest result: %#v", res)
+	}
+	if len(sender.sent) != 1 || !strings.Contains(sender.sent[0], "current") {
+		t.Fatalf("unexpected sends: %#v", sender.sent)
 	}
 }
