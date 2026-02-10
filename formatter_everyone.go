@@ -1,3 +1,5 @@
+//go:build legacy_discord
+
 // mautrix-teams - A Matrix-Teams puppeting bridge.
 // Copyright (C) 2023 Tulir Asokan
 //

@@ -1,3 +1,5 @@
+//go:build legacy_discord
+
 package main
 
 import (

@@ -21,8 +21,6 @@ import (
 	"sync"
 
 	"go.mau.fi/util/configupgrade"
-	"go.mau.fi/util/exsync"
-	"golang.org/x/sync/semaphore"
 	"maunium.net/go/mautrix/bridge"
 	"maunium.net/go/mautrix/bridge/commands"
 	"maunium.net/go/mautrix/event"
@@ -50,35 +48,12 @@ type DiscordBridge struct {
 	Config *config.Config
 	DB     *database.Database
 
-	DMA          *DirectMediaAPI
-	provisioning *ProvisioningAPI
-
 	usersByMXID map[id.UserID]*User
 	usersByID   map[string]*User
 	usersLock   sync.Mutex
 
 	managementRooms     map[id.RoomID]*User
 	managementRoomsLock sync.Mutex
-
-	portalsByMXID map[id.RoomID]*Portal
-	portalsByID   map[database.PortalKey]*Portal
-	portalsLock   sync.Mutex
-
-	threadsByID                 map[string]*Thread
-	threadsByRootMXID           map[id.EventID]*Thread
-	threadsByCreationNoticeMXID map[id.EventID]*Thread
-	threadsLock                 sync.Mutex
-
-	guildsByMXID map[id.RoomID]*Guild
-	guildsByID   map[string]*Guild
-	guildsLock   sync.Mutex
-
-	puppets             map[string]*Puppet
-	puppetsByCustomMXID map[id.UserID]*Puppet
-	puppetsLock         sync.Mutex
-
-	attachmentTransfers         *exsync.Map[attachmentKey, *exsync.ReturnableOnce[*database.File]]
-	parallelAttachmentSemaphore *semaphore.Weighted
 
 	TeamsThreadStore     *teamsbridge.TeamsThreadStore
 	TeamsConsumerSender  *teamsbridge.TeamsConsumerSender
@@ -106,10 +81,7 @@ func (br *DiscordBridge) Init() {
 	br.EventProcessor.On(event.StateTombstone, br.HandleTombstone)
 	br.EventProcessor.On(event.EventReaction, br.HandleTeamsConsumerReaction)
 
-	matrixHTMLParser.PillConverter = br.pillConverter
-
 	br.DB = database.New(br.Bridge.DB, br.Log.Sub("Database"))
-	discordLog = br.ZLog.With().Str("component", "discordgo").Logger()
 }
 
 func (br *DiscordBridge) Start() {
@@ -120,14 +92,6 @@ func (br *DiscordBridge) Start() {
 }
 
 func (br *DiscordBridge) Stop() {
-	for _, user := range br.usersByMXID {
-		if user.Session == nil {
-			continue
-		}
-
-		br.Log.Debugln("Disconnecting", user.MXID)
-		user.Session.Close()
-	}
 }
 
 func (br *DiscordBridge) GetIPortal(mxid id.RoomID) bridge.Portal {
@@ -175,22 +139,6 @@ func main() {
 		usersByID:   make(map[string]*User),
 
 		managementRooms: make(map[id.RoomID]*User),
-
-		portalsByMXID: make(map[id.RoomID]*Portal),
-		portalsByID:   make(map[database.PortalKey]*Portal),
-
-		threadsByID:                 make(map[string]*Thread),
-		threadsByRootMXID:           make(map[id.EventID]*Thread),
-		threadsByCreationNoticeMXID: make(map[id.EventID]*Thread),
-
-		guildsByID:   make(map[string]*Guild),
-		guildsByMXID: make(map[id.RoomID]*Guild),
-
-		puppets:             make(map[string]*Puppet),
-		puppetsByCustomMXID: make(map[id.UserID]*Puppet),
-
-		attachmentTransfers:         exsync.NewMap[attachmentKey, *exsync.ReturnableOnce[*database.File]](),
-		parallelAttachmentSemaphore: semaphore.NewWeighted(3),
 	}
 	br.Bridge = bridge.Bridge{
 		Name:              "mautrix-teams",
