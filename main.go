@@ -18,7 +18,6 @@ package main
 
 import (
 	_ "embed"
-	"net/http"
 	"sync"
 
 	"go.mau.fi/util/configupgrade"
@@ -104,7 +103,6 @@ func (br *DiscordBridge) GetConfigPtr() interface{} {
 
 func (br *DiscordBridge) Init() {
 	br.CommandProcessor = commands.NewProcessor(&br.Bridge)
-	br.RegisterCommands()
 	br.EventProcessor.On(event.StateTombstone, br.HandleTombstone)
 	br.EventProcessor.On(event.EventReaction, br.HandleTeamsConsumerReaction)
 
@@ -115,15 +113,7 @@ func (br *DiscordBridge) Init() {
 }
 
 func (br *DiscordBridge) Start() {
-	if br.Config.Bridge.Provisioning.SharedSecret != "disable" {
-		br.provisioning = newProvisioningAPI(br)
-	}
-	if br.Config.Bridge.PublicAddress != "" {
-		br.AS.Router.HandleFunc("/mautrix-discord/avatar/{server}/{mediaID}/{checksum}", br.serveMediaProxy).Methods(http.MethodGet)
-	}
-	br.DMA = newDirectMediaAPI(br)
 	br.WaitWebsocketConnected()
-	go br.startUsers()
 	br.startTeamsConsumerRoomSync()
 	br.startTeamsConsumerMessageSync()
 	br.startTeamsConsumerSender()
