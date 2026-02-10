@@ -44,6 +44,25 @@ func NewTeamsConsumerSender(client *client.Client, intents SendIntentStore, thre
 }
 
 func (s *TeamsConsumerSender) SendMatrixText(ctx context.Context, roomID id.RoomID, body string, eventID id.EventID, intentMXID id.UserID, writer MSSWriter) error {
+	return s.sendMatrixPayload(ctx, roomID, eventID, intentMXID, writer, func(threadID string, clientMessageID string) (int, error) {
+		return s.Client.SendMessageWithID(ctx, threadID, body, s.UserID, clientMessageID)
+	})
+}
+
+func (s *TeamsConsumerSender) SendMatrixGIF(ctx context.Context, roomID id.RoomID, gifURL string, title string, eventID id.EventID, intentMXID id.UserID, writer MSSWriter) error {
+	return s.sendMatrixPayload(ctx, roomID, eventID, intentMXID, writer, func(threadID string, clientMessageID string) (int, error) {
+		return s.Client.SendGIFWithID(ctx, threadID, gifURL, title, s.UserID, clientMessageID)
+	})
+}
+
+func (s *TeamsConsumerSender) sendMatrixPayload(
+	ctx context.Context,
+	roomID id.RoomID,
+	eventID id.EventID,
+	intentMXID id.UserID,
+	writer MSSWriter,
+	send func(threadID string, clientMessageID string) (int, error),
+) error {
 	if s == nil || s.Client == nil {
 		return errors.New("missing teams consumer client")
 	}
@@ -99,7 +118,7 @@ func (s *TeamsConsumerSender) SendMatrixText(ctx context.Context, roomID id.Room
 		Str("client_message_id", clientMessageID).
 		Msg("teams send attempt")
 
-	statusCode, err := s.Client.SendMessageWithID(ctx, threadID, body, s.UserID, clientMessageID)
+	statusCode, err := send(threadID, clientMessageID)
 	newStatus := database.TeamsSendStatusAccepted
 	if err != nil {
 		newStatus = database.TeamsSendStatusFailed

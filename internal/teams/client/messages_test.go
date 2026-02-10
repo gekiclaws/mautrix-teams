@@ -475,6 +475,42 @@ func TestSendMessageSuccess(t *testing.T) {
 	}
 }
 
+func TestSendGIFWithIDSuccess(t *testing.T) {
+	var payload map[string]string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client())
+	client.SendMessagesURL = server.URL + "/conversations"
+	client.Token = "token123"
+
+	statusCode, err := client.SendGIFWithID(context.Background(), "@19:abc@thread.v2", "https://media4.giphy.com/media/test/giphy.gif", "Football GIF", "8:live:me", "123")
+	if err != nil {
+		t.Fatalf("SendGIFWithID failed: %v", err)
+	}
+	if statusCode != http.StatusOK {
+		t.Fatalf("unexpected status code: %d", statusCode)
+	}
+	if payload["messagetype"] != "RichText/Html" || payload["contenttype"] != "Text" {
+		t.Fatalf("unexpected type fields: %#v", payload)
+	}
+	if !strings.Contains(payload["content"], `itemtype="http://schema.skype.com/Giphy"`) {
+		t.Fatalf("missing giphy itemtype: %q", payload["content"])
+	}
+	if !strings.Contains(payload["content"], `src="https://media4.giphy.com/media/test/giphy.gif"`) {
+		t.Fatalf("missing gif src: %q", payload["content"])
+	}
+	if !strings.Contains(payload["content"], `Football GIF (GIF Image)`) {
+		t.Fatalf("missing gif title label: %q", payload["content"])
+	}
+}
+
 func TestSendMessageNon2xx(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)

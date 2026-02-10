@@ -2,9 +2,11 @@ package teamsbridge
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"strings"
 	"sync"
 	"testing"
 
@@ -135,5 +137,44 @@ func TestTeamsConsumerSenderFailure(t *testing.T) {
 	}
 	if len(statuses) != 2 || statuses[0] != database.TeamsSendStatusPending || statuses[1] != database.TeamsSendStatusFailed {
 		t.Fatalf("unexpected status sequence: %v", statuses)
+	}
+}
+
+func TestTeamsConsumerSenderGIFSuccess(t *testing.T) {
+	store := &fakeSendIntentStore{}
+	var payload map[string]string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	consumer := client.NewClient(server.Client())
+	consumer.SendMessagesURL = server.URL + "/conversations"
+	consumer.Token = "token123"
+
+	statuses := []database.TeamsSendStatus{}
+	writer := func(ctx context.Context, status database.TeamsSendStatus, clientMessageID string, ts int64) error {
+		statuses = append(statuses, status)
+		return nil
+	}
+
+	sender := NewTeamsConsumerSender(consumer, store, fakeThreadLookup{threadID: "19:abc@thread.v2", ok: true}, "8:live:me", zerolog.Nop())
+	err := sender.SendMatrixGIF(context.Background(), "!room:example.org", "https://media4.giphy.com/media/test/giphy.gif", "Football GIF", "$event", "@alice:example.org", writer)
+	if err != nil {
+		t.Fatalf("SendMatrixGIF failed: %v", err)
+	}
+	if len(store.inserted) != 1 {
+		t.Fatalf("expected one send intent, got %d", len(store.inserted))
+	}
+	intent := store.inserted[0]
+	if got := store.updates[intent.ClientMessageID]; got != database.TeamsSendStatusAccepted {
+		t.Fatalf("expected accepted status, got %s", got)
+	}
+	if len(statuses) != 2 || statuses[0] != database.TeamsSendStatusPending || statuses[1] != database.TeamsSendStatusAccepted {
+		t.Fatalf("unexpected status sequence: %v", statuses)
+	}
+	if !strings.Contains(payload["content"], `itemtype="http://schema.skype.com/Giphy"`) {
+		t.Fatalf("unexpected content: %q", payload["content"])
 	}
 }

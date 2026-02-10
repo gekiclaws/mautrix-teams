@@ -137,7 +137,21 @@ func (c *Client) SendMessage(ctx context.Context, threadID string, text string, 
 	return clientMessageID, err
 }
 
+func (c *Client) SendGIF(ctx context.Context, threadID string, gifURL string, title string, fromUserID string) (string, error) {
+	clientMessageID := GenerateClientMessageID()
+	_, err := c.SendGIFWithID(ctx, threadID, gifURL, title, fromUserID, clientMessageID)
+	return clientMessageID, err
+}
+
 func (c *Client) SendMessageWithID(ctx context.Context, threadID string, text string, fromUserID string, clientMessageID string) (int, error) {
+	return c.sendHTMLMessageWithID(ctx, threadID, formatHTMLContent(text), fromUserID, clientMessageID)
+}
+
+func (c *Client) SendGIFWithID(ctx context.Context, threadID string, gifURL string, title string, fromUserID string, clientMessageID string) (int, error) {
+	return c.sendHTMLMessageWithID(ctx, threadID, formatGIFContent(gifURL, title), fromUserID, clientMessageID)
+}
+
+func (c *Client) sendHTMLMessageWithID(ctx context.Context, threadID string, htmlContent string, fromUserID string, clientMessageID string) (int, error) {
 	if c == nil || c.HTTP == nil {
 		return 0, ErrMissingHTTPClient
 	}
@@ -148,8 +162,8 @@ func (c *Client) SendMessageWithID(ctx context.Context, threadID string, text st
 	if threadID == "" {
 		return 0, errors.New("missing thread id")
 	}
-	if strings.TrimSpace(text) == "" {
-		return 0, errors.New("missing message text")
+	if strings.TrimSpace(htmlContent) == "" {
+		return 0, errors.New("missing message content")
 	}
 	if strings.TrimSpace(fromUserID) == "" {
 		return 0, errors.New("missing from user id")
@@ -175,7 +189,7 @@ func (c *Client) SendMessageWithID(ctx context.Context, threadID string, text st
 	payload := map[string]string{
 		"type":                "Message",
 		"conversationid":      threadID,
-		"content":             formatHTMLContent(text),
+		"content":             htmlContent,
 		"messagetype":         "RichText/Html",
 		"contenttype":         "Text",
 		"clientmessageid":     clientMessageID,
@@ -244,6 +258,16 @@ func formatHTMLContent(text string) string {
 	escaped := html.EscapeString(normalized)
 	escaped = strings.ReplaceAll(escaped, "\n", "<br>")
 	return "<p>" + escaped + "</p>"
+}
+
+func formatGIFContent(gifURL string, title string) string {
+	gifURL = strings.TrimSpace(gifURL)
+	label := strings.TrimSpace(title)
+	if label == "" {
+		label = "GIF"
+	}
+	fullLabel := label + " (GIF Image)"
+	return `<p>&nbsp;</p><readonly title="` + html.EscapeString(fullLabel) + `" itemtype="http://schema.skype.com/Giphy" contenteditable="false" aria-label="` + html.EscapeString(fullLabel) + `"><img style="height:auto;margin-top:4px;max-width:100%;" alt="` + html.EscapeString(fullLabel) + `" height="250" width="350" src="` + html.EscapeString(gifURL) + `" itemtype="http://schema.skype.com/Giphy"></readonly><p>&nbsp;</p>`
 }
 
 func classifyTeamsSendResponse(resp *http.Response) error {
