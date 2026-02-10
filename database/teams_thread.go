@@ -21,10 +21,10 @@ const (
 		VALUES ($1, $2, $3, $4, $5, $6)
 		ON CONFLICT (thread_id) DO UPDATE
 		    SET room_id=excluded.room_id,
-		        conversation_id=excluded.conversation_id,
-		        last_sequence_id=excluded.last_sequence_id,
-		        last_message_ts=excluded.last_message_ts,
-		        last_message_id=excluded.last_message_id
+		        conversation_id=COALESCE(excluded.conversation_id, teams_thread.conversation_id),
+		        last_sequence_id=COALESCE(excluded.last_sequence_id, teams_thread.last_sequence_id),
+		        last_message_ts=COALESCE(excluded.last_message_ts, teams_thread.last_message_ts),
+		        last_message_id=COALESCE(excluded.last_message_id, teams_thread.last_message_id)
 	`
 	teamsThreadUpdateLastSequence = "UPDATE teams_thread SET last_sequence_id=$1 WHERE thread_id=$2"
 )
