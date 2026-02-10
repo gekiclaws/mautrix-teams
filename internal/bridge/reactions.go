@@ -49,6 +49,11 @@ func NewTeamsConsumerReactor(client ReactionClient, threads ThreadLookup, messag
 }
 
 var emojiToEmotionKey = map[string]string{
+	variationselector.FullyQualify("👍🏻"): "like",
+	variationselector.FullyQualify("👌🏻"): "ok",
+	variationselector.FullyQualify("🔥"):  "fire",
+	variationselector.FullyQualify("💙"):  "heartblue",
+
 	// Page 1
 	variationselector.FullyQualify("🙂"):  "smile",
 	variationselector.FullyQualify("😄"):  "laugh",
