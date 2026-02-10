@@ -132,7 +132,7 @@ func (m *MessageIngestor) IngestThread(ctx context.Context, threadID string, con
 			ingestReactions(msg, "")
 			continue
 		}
-		if msg.Body == "" && !hasAttachments {
+		if msg.Body == "" && !hasAttachments && len(msg.GIFs) == 0 {
 			m.Log.Debug().
 				Str("thread_id", threadID).
 				Str("seq", msg.SequenceID).
@@ -213,7 +213,7 @@ func (m *MessageIngestor) IngestThread(ctx context.Context, threadID string, con
 				"displayname": displayName,
 			}
 		}
-		rendered := RenderInboundMessage(msg.Body, msg.FormattedBody, attachments)
+		rendered := RenderInboundMessageWithGIFs(msg.Body, msg.FormattedBody, attachments, msg.GIFs)
 		if rendered.FormattedBody != "" {
 			extra["format"] = string(event.FormatHTML)
 			extra["formatted_body"] = rendered.FormattedBody

@@ -198,6 +198,37 @@ func TestListMessagesContentVariants(t *testing.T) {
 	}
 }
 
+func TestListMessagesParsesGIFContent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"messages":[` +
+			`{"id":"m1","sequenceId":"1","content":"<p>&nbsp;</p><readonly title=\"Football GIF\" itemtype=\"http://schema.skype.com/Giphy\"><img alt=\"Football GIF\" src=\"https://media4.giphy.com/media/test/giphy.gif\" itemtype=\"http://schema.skype.com/Giphy\"></readonly><p>&nbsp;</p>"}` +
+			`]}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client())
+	client.MessagesURL = server.URL + "/conversations"
+	client.Token = "token123"
+
+	msgs, err := client.ListMessages(context.Background(), "@oneToOne.skype", "")
+	if err != nil {
+		t.Fatalf("ListMessages failed: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("unexpected messages length: %d", len(msgs))
+	}
+	if len(msgs[0].GIFs) != 1 {
+		t.Fatalf("expected one gif, got %#v", msgs[0].GIFs)
+	}
+	if msgs[0].GIFs[0].Title != "Football GIF" {
+		t.Fatalf("unexpected gif title: %q", msgs[0].GIFs[0].Title)
+	}
+	if msgs[0].GIFs[0].URL != "https://media4.giphy.com/media/test/giphy.gif" {
+		t.Fatalf("unexpected gif url: %q", msgs[0].GIFs[0].URL)
+	}
+}
+
 func TestListMessagesFromVariants(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/conversations/%40oneToOne.skype/messages" && r.URL.Path != "/conversations/@oneToOne.skype/messages" {

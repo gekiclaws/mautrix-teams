@@ -103,6 +103,7 @@ func (c *Client) ListMessages(ctx context.Context, conversationID string, sinceS
 			Timestamp:        model.ParseTimestamp(msg.OriginalArrivalTime),
 			Body:             content.Body,
 			FormattedBody:    content.FormattedBody,
+			GIFs:             content.GIFs,
 			PropertiesFiles:  model.ExtractFilesProperty(msg.Properties),
 			Reactions:        model.ExtractReactions(msg.Properties),
 		})

@@ -927,6 +927,47 @@ func TestIngestThreadTextPlusAttachmentSendsSingleEvent(t *testing.T) {
 	}
 }
 
+func TestIngestThreadGIFOnlyMessageSendsSingleEvent(t *testing.T) {
+	lister := &fakeMessageLister{
+		messages: []model.RemoteMessage{
+			{
+				SequenceID: "1",
+				Body:       "",
+				GIFs: []model.TeamsGIF{
+					{Title: "Football GIF", URL: "https://media4.giphy.com/media/test/giphy.gif"},
+				},
+			},
+		},
+	}
+	sender := &fakeMatrixSender{}
+	ingestor := &MessageIngestor{
+		Lister: lister,
+		Sender: sender,
+		Log:    zerolog.New(io.Discard),
+	}
+
+	res, err := ingestor.IngestThread(context.Background(), "thread-1", "@oneToOne.skype", "!room:example", nil)
+	if err != nil {
+		t.Fatalf("IngestThread failed: %v", err)
+	}
+	if !res.Advanced || res.MessagesIngested != 1 {
+		t.Fatalf("expected one ingested message, got %#v", res)
+	}
+	if len(sender.sent) != 1 {
+		t.Fatalf("expected one send, got %#v", sender.sent)
+	}
+	if sender.sent[0] != "GIF: Football GIF - https://media4.giphy.com/media/test/giphy.gif" {
+		t.Fatalf("unexpected sent body: %q", sender.sent[0])
+	}
+	if len(sender.extra) != 1 {
+		t.Fatalf("expected one extra payload")
+	}
+	formattedBody, _ := sender.extra[0]["formatted_body"].(string)
+	if !strings.Contains(formattedBody, `<a href="https://media4.giphy.com/media/test/giphy.gif">Football GIF</a>`) {
+		t.Fatalf("unexpected formatted body: %q", formattedBody)
+	}
+}
+
 func TestIngestThreadAttachmentPresenceDoesNotAffectSequenceHandling(t *testing.T) {
 	lister := &fakeMessageLister{
 		messages: []model.RemoteMessage{

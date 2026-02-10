@@ -18,6 +18,7 @@ type RemoteMessage struct {
 	Timestamp        time.Time
 	Body             string
 	FormattedBody    string
+	GIFs             []TeamsGIF
 	PropertiesFiles  string
 	Reactions        []MessageReaction
 }
@@ -25,6 +26,7 @@ type RemoteMessage struct {
 type MessageContent struct {
 	Body          string
 	FormattedBody string
+	GIFs          []TeamsGIF
 }
 
 type MessageReaction struct {
@@ -47,13 +49,21 @@ func ExtractContent(content json.RawMessage) MessageContent {
 	}
 	var plain string
 	if err := json.Unmarshal(content, &plain); err == nil {
-		return NormalizeMessageBody(plain)
+		normalized := NormalizeMessageBody(plain)
+		if gifs, ok := ParseGIFsFromHTML(plain); ok {
+			normalized.GIFs = gifs
+		}
+		return normalized
 	}
 	var obj struct {
 		Text string `json:"text"`
 	}
 	if err := json.Unmarshal(content, &obj); err == nil {
-		return NormalizeMessageBody(obj.Text)
+		normalized := NormalizeMessageBody(obj.Text)
+		if gifs, ok := ParseGIFsFromHTML(obj.Text); ok {
+			normalized.GIFs = gifs
+		}
+		return normalized
 	}
 	return MessageContent{}
 }
