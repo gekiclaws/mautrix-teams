@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -31,6 +32,20 @@ func (c *Client) ExchangeCode(ctx context.Context, code, verifier string) (*Auth
 	values.Set("grant_type", "authorization_code")
 	values.Set("code", code)
 	values.Set("code_verifier", verifier)
+	return c.tokenRequest(ctx, values)
+}
+
+func (c *Client) RefreshAccessToken(ctx context.Context, refreshToken string) (*AuthState, error) {
+	if refreshToken == "" {
+		return nil, errors.New("missing refresh token")
+	}
+	values := url.Values{}
+	values.Set("client_id", c.ClientID)
+	values.Set("grant_type", "refresh_token")
+	values.Set("refresh_token", refreshToken)
+	if len(c.Scopes) > 0 {
+		values.Set("scope", strings.Join(c.Scopes, " "))
+	}
 	return c.tokenRequest(ctx, values)
 }
 

@@ -1,0 +1,4 @@
+# OAuth client ID used for Teams login token extraction (MSAL localStorage).
+# Leave empty to use the default Teams web app client ID.
+client_id: ""
+
