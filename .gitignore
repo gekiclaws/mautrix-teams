@@ -12,3 +12,4 @@ cookies.json
 .env
 mautrix-teams
 /teams-login
+.DS_Store
