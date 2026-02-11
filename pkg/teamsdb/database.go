@@ -11,8 +11,9 @@ import (
 type Database struct {
 	*dbutil.Database
 
-	ThreadState *ThreadStateQuery
-	Profile     *ProfileQuery
+	ThreadState        *ThreadStateQuery
+	Profile            *ProfileQuery
+	ConsumptionHorizon *ConsumptionHorizonQuery
 }
 
 func New(bridgeID networkid.BridgeID, db *dbutil.Database, log zerolog.Logger) *Database {
@@ -24,6 +25,10 @@ func New(bridgeID networkid.BridgeID, db *dbutil.Database, log zerolog.Logger) *
 			Database: db,
 		},
 		Profile: &ProfileQuery{
+			BridgeID: bridgeID,
+			Database: db,
+		},
+		ConsumptionHorizon: &ConsumptionHorizonQuery{
 			BridgeID: bridgeID,
 			Database: db,
 		},

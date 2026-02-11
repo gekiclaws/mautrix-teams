@@ -23,3 +23,14 @@ CREATE TABLE IF NOT EXISTS teams_profile (
 );
 
 CREATE INDEX IF NOT EXISTS teams_profile_seen_idx ON teams_profile (bridge_id, last_seen_ts);
+
+CREATE TABLE IF NOT EXISTS teams_consumption_horizon_state (
+    bridge_id TEXT NOT NULL,
+    user_login_id TEXT NOT NULL,
+    thread_id TEXT NOT NULL,
+    teams_user_id TEXT NOT NULL,
+    last_read_ts BIGINT NOT NULL,
+    PRIMARY KEY (bridge_id, user_login_id, thread_id, teams_user_id)
+);
+
+CREATE INDEX IF NOT EXISTS teams_consumption_horizon_idx ON teams_consumption_horizon_state (bridge_id, user_login_id, thread_id);

@@ -333,20 +333,32 @@ func (c *TeamsClient) pollThread(ctx context.Context, th *teamsdb.ThreadState, n
 		if strings.TrimSpace(msg.MessageID) == "" {
 			continue
 		}
+		messageID := NormalizeTeamsReactionMessageID(msg.MessageID)
+		if messageID == "" {
+			messageID = NormalizeTeamsReactionMessageID(msg.SequenceID)
+		}
+		if messageID != "" && len(msg.Reactions) > 0 {
+			c.markReactionSeen(messageID, true)
+		}
 		// Filter already-seen messages in case the remote API returns history.
 		if lastSeq != "" && model.CompareSequenceID(strings.TrimSpace(msg.SequenceID), lastSeq) <= 0 {
+			// Still process reactions on older messages for sync parity.
+			c.queueReactionSyncForMessage(ctx, th, msg)
 			continue
 		}
 
 		senderID := model.NormalizeTeamsUserID(msg.SenderID)
-		displayName := strings.TrimSpace(msg.TokenDisplayName)
+		displayName := strings.TrimSpace(msg.IMDisplayName)
 		if displayName == "" {
-			displayName = strings.TrimSpace(msg.IMDisplayName)
+			displayName = strings.TrimSpace(msg.TokenDisplayName)
 		}
 		if displayName == "" {
 			displayName = senderID
 		}
 		_ = c.Main.DB.Profile.Upsert(ctx, senderID, displayName, now)
+		msg.SenderName = displayName
+
+		c.queueReactionSyncForMessage(ctx, th, msg)
 
 		es := bridgev2.EventSender{Sender: teamsUserIDToNetworkUserID(senderID)}
 		if senderID != "" && strings.TrimSpace(c.Meta.TeamsUserID) != "" && senderID == c.Meta.TeamsUserID {
@@ -383,5 +395,6 @@ func (c *TeamsClient) pollThread(ctx context.Context, th *teamsdb.ThreadState, n
 		th.LastSequenceID = maxSeq
 		th.LastMessageTS = maxTS
 	}
+	_ = c.pollConsumptionHorizons(ctx, th, now)
 	return nil
 }

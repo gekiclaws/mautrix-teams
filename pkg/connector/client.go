@@ -31,11 +31,22 @@ type TeamsClient struct {
 	syncMu     sync.Mutex
 	syncCancel context.CancelFunc
 	syncDone   chan struct{}
+
+	reactionSeenMu sync.Mutex
+	reactionSeen   map[string]struct{}
+
+	receiptPollMu   sync.Mutex
+	receiptPoll     map[string]time.Time
+	receiptSendMu   sync.Mutex
+	receiptLastSent map[string]time.Time
 }
 
 var (
-	_ bridgev2.NetworkAPI                  = (*TeamsClient)(nil)
-	_ bridgev2.BackgroundSyncingNetworkAPI = (*TeamsClient)(nil)
+	_ bridgev2.NetworkAPI                    = (*TeamsClient)(nil)
+	_ bridgev2.BackgroundSyncingNetworkAPI   = (*TeamsClient)(nil)
+	_ bridgev2.ReactionHandlingNetworkAPI    = (*TeamsClient)(nil)
+	_ bridgev2.ReadReceiptHandlingNetworkAPI = (*TeamsClient)(nil)
+	_ bridgev2.TypingHandlingNetworkAPI      = (*TeamsClient)(nil)
 )
 
 func (c *TeamsClient) Connect(ctx context.Context) {
@@ -160,7 +171,12 @@ func (c *TeamsClient) GetUserInfo(ctx context.Context, ghost *bridgev2.Ghost) (*
 func (c *TeamsClient) GetCapabilities(ctx context.Context, portal *bridgev2.Portal) *event.RoomFeatures {
 	_ = ctx
 	_ = portal
-	return &event.RoomFeatures{}
+	return &event.RoomFeatures{
+		Reaction:               event.CapLevelFullySupported,
+		TypingNotifications:    true,
+		ReadReceipts:           true,
+		PerMessageProfileRelay: true,
+	}
 }
 
 func (c *TeamsClient) HandleMatrixMessage(ctx context.Context, msg *bridgev2.MatrixMessage) (*bridgev2.MatrixMessageResponse, error) {
@@ -168,9 +184,6 @@ func (c *TeamsClient) HandleMatrixMessage(ctx context.Context, msg *bridgev2.Mat
 		return nil, bridgev2.ErrNotLoggedIn
 	}
 	if msg == nil || msg.Content == nil {
-		return nil, bridgev2.ErrUnsupportedMessageType
-	}
-	if msg.Content.MsgType != event.MsgText {
 		return nil, bridgev2.ErrUnsupportedMessageType
 	}
 	threadID := strings.TrimSpace(string(msg.Portal.ID))
@@ -188,7 +201,19 @@ func (c *TeamsClient) HandleMatrixMessage(ctx context.Context, msg *bridgev2.Mat
 	msg.AddPendingToIgnore(networkid.TransactionID(clientMessageID))
 
 	now := time.Now().UTC()
-	_, err := consumer.SendMessageWithID(ctx, threadID, msg.Content.Body, c.Meta.TeamsUserID, clientMessageID)
+	var err error
+	switch msg.Content.MsgType {
+	case event.MsgText:
+		_, err = consumer.SendMessageWithID(ctx, threadID, msg.Content.Body, c.Meta.TeamsUserID, clientMessageID)
+	case event.MsgImage:
+		title, gifURL, ok := extractOutboundGIF(msg.Content)
+		if !ok {
+			return nil, bridgev2.ErrUnsupportedMessageType
+		}
+		_, err = consumer.SendGIFWithID(ctx, threadID, gifURL, title, c.Meta.TeamsUserID, clientMessageID)
+	default:
+		return nil, bridgev2.ErrUnsupportedMessageType
+	}
 	if err != nil {
 		return nil, err
 	}
