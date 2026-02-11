@@ -23,6 +23,9 @@ func (c *TeamsClient) PreHandleMatrixReaction(ctx context.Context, msg *bridgev2
 	if !c.IsLoggedIn() {
 		return bridgev2.MatrixReactionPreResponse{}, bridgev2.ErrNotLoggedIn
 	}
+	if err := c.ensureValidSkypeToken(ctx); err != nil {
+		return bridgev2.MatrixReactionPreResponse{}, err
+	}
 	if msg == nil || msg.Content == nil {
 		return bridgev2.MatrixReactionPreResponse{}, errors.New("missing reaction content")
 	}
@@ -44,6 +47,9 @@ func (c *TeamsClient) PreHandleMatrixReaction(ctx context.Context, msg *bridgev2
 func (c *TeamsClient) HandleMatrixReaction(ctx context.Context, msg *bridgev2.MatrixReaction) (*database.Reaction, error) {
 	if !c.IsLoggedIn() {
 		return nil, bridgev2.ErrNotLoggedIn
+	}
+	if err := c.ensureValidSkypeToken(ctx); err != nil {
+		return nil, err
 	}
 	if msg == nil || msg.Content == nil {
 		return nil, errors.New("missing reaction content")
@@ -96,6 +102,9 @@ func (c *TeamsClient) HandleMatrixReaction(ctx context.Context, msg *bridgev2.Ma
 func (c *TeamsClient) HandleMatrixReactionRemove(ctx context.Context, msg *bridgev2.MatrixReactionRemove) error {
 	if !c.IsLoggedIn() {
 		return bridgev2.ErrNotLoggedIn
+	}
+	if err := c.ensureValidSkypeToken(ctx); err != nil {
+		return err
 	}
 	if msg == nil || msg.TargetReaction == nil {
 		return nil

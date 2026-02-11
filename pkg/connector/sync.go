@@ -366,6 +366,10 @@ func (c *TeamsClient) pollThread(ctx context.Context, th *teamsdb.ThreadState, n
 			es.SenderLogin = c.Login.ID
 		}
 
+		eventMessageID := messageID
+		if eventMessageID == "" {
+			eventMessageID = strings.TrimSpace(msg.MessageID)
+		}
 		evt := &simplevent.Message[model.RemoteMessage]{
 			EventMeta: simplevent.EventMeta{
 				Type:         bridgev2.RemoteEventMessage,
@@ -376,7 +380,7 @@ func (c *TeamsClient) pollThread(ctx context.Context, th *teamsdb.ThreadState, n
 				StreamOrder:  msg.Timestamp.UnixMilli(),
 			},
 			Data:               msg,
-			ID:                 networkid.MessageID(msg.MessageID),
+			ID:                 networkid.MessageID(eventMessageID),
 			TransactionID:      networkid.TransactionID(strings.TrimSpace(msg.ClientMessageID)),
 			ConvertMessageFunc: convertTeamsMessage,
 		}

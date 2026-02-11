@@ -12,6 +12,9 @@ func (c *TeamsClient) HandleMatrixTyping(ctx context.Context, msg *bridgev2.Matr
 	if !c.IsLoggedIn() {
 		return bridgev2.ErrNotLoggedIn
 	}
+	if err := c.ensureValidSkypeToken(ctx); err != nil {
+		return err
+	}
 	if msg == nil || !msg.IsTyping {
 		return nil
 	}

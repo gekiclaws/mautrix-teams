@@ -24,6 +24,9 @@ func (c *TeamsClient) HandleMatrixReadReceipt(ctx context.Context, msg *bridgev2
 	if !c.IsLoggedIn() {
 		return bridgev2.ErrNotLoggedIn
 	}
+	if err := c.ensureValidSkypeToken(ctx); err != nil {
+		return err
+	}
 	if msg == nil {
 		return nil
 	}

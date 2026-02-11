@@ -183,6 +183,9 @@ func (c *TeamsClient) HandleMatrixMessage(ctx context.Context, msg *bridgev2.Mat
 	if !c.IsLoggedIn() {
 		return nil, bridgev2.ErrNotLoggedIn
 	}
+	if err := c.ensureValidSkypeToken(ctx); err != nil {
+		return nil, err
+	}
 	if msg == nil || msg.Content == nil {
 		return nil, bridgev2.ErrUnsupportedMessageType
 	}
