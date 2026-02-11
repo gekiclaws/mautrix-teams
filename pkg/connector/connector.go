@@ -2,11 +2,12 @@ package connector
 
 import (
 	"context"
+	"fmt"
 
 	"maunium.net/go/mautrix/bridgev2"
-	"maunium.net/go/mautrix/bridgev2/database"
 
 	"go.mau.fi/mautrix-teams/pkg/teamsdb"
+	"go.mau.fi/mautrix-teams/pkg/teamsid"
 )
 
 type TeamsConnector struct {
@@ -28,44 +29,31 @@ func (t *TeamsConnector) GetName() bridgev2.BridgeName {
 	}
 }
 
-func (t *TeamsConnector) GetDBMetaTypes() database.MetaTypes {
-	return database.MetaTypes{
-		UserLogin: func() any { return &TeamsUserLoginMetadata{} },
-	}
-}
-
-func (t *TeamsConnector) GetCapabilities() *bridgev2.NetworkGeneralCapabilities {
-	return &bridgev2.NetworkGeneralCapabilities{
-		Provisioning: bridgev2.ProvisioningCapabilities{
-			// Login flows are supported by default if GetLoginFlows/CreateLogin are implemented.
-			// Other endpoints will return "not supported" unless explicitly implemented.
-		},
-	}
-}
-
 func (t *TeamsConnector) Init(br *bridgev2.Bridge) {
 	t.Bridge = br
+	if br != nil && br.DB != nil && br.DB.Database != nil {
+		t.DB = teamsdb.New(br.ID, br.DB.Database, br.Log.With().Str("db_section", "teams").Logger())
+	}
 }
 
 func (t *TeamsConnector) Start(ctx context.Context) error {
-	// Initialize Teams-specific DB section.
-	if t.Bridge == nil || t.Bridge.DB == nil || t.Bridge.DB.Database == nil {
-		return nil
+	if t.DB == nil {
+		return fmt.Errorf("database not initialized")
 	}
-	t.DB = teamsdb.New(t.Bridge.ID, t.Bridge.DB.Database, t.Bridge.Log.With().Str("db_section", "teams").Logger())
 	if err := t.DB.Upgrade(ctx); err != nil {
 		return bridgev2.DBUpgradeError{Err: err, Section: "teams"}
 	}
 	return nil
 }
 
-func (t *TeamsConnector) GetBridgeInfoVersion() (info, capabilities int) {
-	return 0, 0
-}
-
 func (t *TeamsConnector) LoadUserLogin(ctx context.Context, login *bridgev2.UserLogin) error {
+	_ = ctx
 	// Ensure metadata is the expected concrete type (bridgev2 unmarshals into the type returned by GetDBMetaTypes).
-	meta, _ := login.Metadata.(*TeamsUserLoginMetadata)
+	meta, _ := login.Metadata.(*teamsid.UserLoginMetadata)
+	if meta == nil {
+		meta = &teamsid.UserLoginMetadata{}
+		login.Metadata = meta
+	}
 	login.Client = &TeamsClient{
 		Main:  t,
 		Login: login,

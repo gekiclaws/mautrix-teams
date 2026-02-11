@@ -223,7 +223,7 @@ func isRetryableNetworkError(ctx context.Context, err error) bool {
 	}
 	var netErr net.Error
 	if errors.As(err, &netErr) {
-		return netErr.Timeout() || netErr.Temporary()
+		return netErr.Timeout()
 	}
 	return false
 }
@@ -249,10 +249,7 @@ func isTLSError(err error) bool {
 		return true
 	}
 	var hostErr x509.HostnameError
-	if errors.As(unwrapped, &hostErr) {
-		return true
-	}
-	return false
+	return errors.As(unwrapped, &hostErr)
 }
 
 func unwrapURLError(err error) error {

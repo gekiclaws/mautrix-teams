@@ -1,13 +1,27 @@
 package connector
 
-// TeamsUserLoginMetadata is persisted in bridgev2's user_login.metadata JSON column.
-//
-// It stores enough information to (re-)acquire a Teams skypetoken without redoing the full browser flow.
-type TeamsUserLoginMetadata struct {
-	RefreshToken         string `json:"refresh_token,omitempty"`
-	AccessTokenExpiresAt int64  `json:"access_token_expires_at,omitempty"`
+import (
+	"maunium.net/go/mautrix/bridgev2/database"
 
-	SkypeToken          string `json:"skype_token,omitempty"`
-	SkypeTokenExpiresAt int64  `json:"skype_token_expires_at,omitempty"`
-	TeamsUserID         string `json:"teams_user_id,omitempty"`
+	"go.mau.fi/mautrix-teams/pkg/teamsid"
+)
+
+func (t *TeamsConnector) GetDBMetaTypes() database.MetaTypes {
+	return database.MetaTypes{
+		Portal: func() any {
+			return &teamsid.PortalMetadata{}
+		},
+		Ghost: func() any {
+			return &teamsid.GhostMetadata{}
+		},
+		Message: func() any {
+			return &teamsid.MessageMetadata{}
+		},
+		Reaction: func() any {
+			return &teamsid.ReactionMetadata{}
+		},
+		UserLogin: func() any {
+			return &teamsid.UserLoginMetadata{}
+		},
+	}
 }

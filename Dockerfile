@@ -1,20 +1,19 @@
-FROM golang:1-alpine3.22 AS builder
+FROM golang:1-alpine3.23 AS builder
 
 RUN apk add --no-cache git ca-certificates build-base su-exec olm-dev
 
 COPY . /build
 WORKDIR /build
-RUN go build -o /usr/bin/mautrix-teams
+RUN ./build.sh
 
-FROM alpine:3.22
+FROM alpine:3.23
 
 ENV UID=1337 \
     GID=1337
 
 RUN apk add --no-cache ffmpeg su-exec ca-certificates olm bash jq curl yq-go lottieconverter
 
-COPY --from=builder /usr/bin/mautrix-teams /usr/bin/mautrix-teams
-COPY --from=builder /build/example-config.yaml /opt/mautrix-teams/example-config.yaml
+COPY --from=builder /build/mautrix-teams /usr/bin/mautrix-teams
 COPY --from=builder /build/docker-run.sh /docker-run.sh
 VOLUME /data
 

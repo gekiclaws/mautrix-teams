@@ -16,12 +16,13 @@ import (
 
 	"go.mau.fi/mautrix-teams/internal/teams/auth"
 	consumerclient "go.mau.fi/mautrix-teams/internal/teams/client"
+	"go.mau.fi/mautrix-teams/pkg/teamsid"
 )
 
 type TeamsClient struct {
 	Main  *TeamsConnector
 	Login *bridgev2.UserLogin
-	Meta  *TeamsUserLoginMetadata
+	Meta  *teamsid.UserLoginMetadata
 
 	loggedIn atomic.Bool
 
@@ -35,10 +36,11 @@ type TeamsClient struct {
 	reactionSeenMu sync.Mutex
 	reactionSeen   map[string]struct{}
 
-	receiptPollMu   sync.Mutex
-	receiptPoll     map[string]time.Time
-	receiptSendMu   sync.Mutex
-	receiptLastSent map[string]time.Time
+	receiptPollMu sync.Mutex
+	receiptPoll   map[string]time.Time
+	unreadMu      sync.Mutex
+	unreadSeen    map[string]bool
+	unreadSent    map[string]bool
 }
 
 var (
@@ -54,10 +56,10 @@ func (c *TeamsClient) Connect(ctx context.Context) {
 		return
 	}
 	if c.Meta == nil {
-		if meta, ok := c.Login.Metadata.(*TeamsUserLoginMetadata); ok {
+		if meta, ok := c.Login.Metadata.(*teamsid.UserLoginMetadata); ok {
 			c.Meta = meta
 		} else {
-			c.Meta = &TeamsUserLoginMetadata{}
+			c.Meta = &teamsid.UserLoginMetadata{}
 			c.Login.Metadata = c.Meta
 		}
 	}
@@ -92,7 +94,7 @@ func (c *TeamsClient) IsLoggedIn() bool {
 		return true
 	}
 	if c.Meta == nil {
-		if meta, ok := c.Login.Metadata.(*TeamsUserLoginMetadata); ok {
+		if meta, ok := c.Login.Metadata.(*teamsid.UserLoginMetadata); ok {
 			c.Meta = meta
 		}
 	}
@@ -108,8 +110,8 @@ func (c *TeamsClient) LogoutRemote(ctx context.Context) {
 		return
 	}
 	c.stopSyncLoop(5 * time.Second)
-	if meta, ok := c.Login.Metadata.(*TeamsUserLoginMetadata); ok && meta != nil {
-		*meta = TeamsUserLoginMetadata{}
+	if meta, ok := c.Login.Metadata.(*teamsid.UserLoginMetadata); ok && meta != nil {
+		*meta = teamsid.UserLoginMetadata{}
 	}
 	_ = c.Login.Save(ctx)
 	c.loggedIn.Store(false)
@@ -172,64 +174,12 @@ func (c *TeamsClient) GetCapabilities(ctx context.Context, portal *bridgev2.Port
 	_ = ctx
 	_ = portal
 	return &event.RoomFeatures{
+		ID:                     "fi.mau.teams.capabilities.2026_02_11",
 		Reaction:               event.CapLevelFullySupported,
 		TypingNotifications:    true,
 		ReadReceipts:           true,
 		PerMessageProfileRelay: true,
 	}
-}
-
-func (c *TeamsClient) HandleMatrixMessage(ctx context.Context, msg *bridgev2.MatrixMessage) (*bridgev2.MatrixMessageResponse, error) {
-	if !c.IsLoggedIn() {
-		return nil, bridgev2.ErrNotLoggedIn
-	}
-	if err := c.ensureValidSkypeToken(ctx); err != nil {
-		return nil, err
-	}
-	if msg == nil || msg.Content == nil {
-		return nil, bridgev2.ErrUnsupportedMessageType
-	}
-	threadID := strings.TrimSpace(string(msg.Portal.ID))
-	if threadID == "" {
-		return nil, errors.New("missing thread id")
-	}
-
-	consumer := c.getConsumer()
-	if consumer == nil {
-		return nil, errors.New("missing consumer client")
-	}
-	consumer.Token = c.Meta.SkypeToken
-
-	clientMessageID := consumerclient.GenerateClientMessageID()
-	msg.AddPendingToIgnore(networkid.TransactionID(clientMessageID))
-
-	now := time.Now().UTC()
-	var err error
-	switch msg.Content.MsgType {
-	case event.MsgText:
-		_, err = consumer.SendMessageWithID(ctx, threadID, msg.Content.Body, c.Meta.TeamsUserID, clientMessageID)
-	case event.MsgImage:
-		title, gifURL, ok := extractOutboundGIF(msg.Content)
-		if !ok {
-			return nil, bridgev2.ErrUnsupportedMessageType
-		}
-		_, err = consumer.SendGIFWithID(ctx, threadID, gifURL, title, c.Meta.TeamsUserID, clientMessageID)
-	default:
-		return nil, bridgev2.ErrUnsupportedMessageType
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	return &bridgev2.MatrixMessageResponse{
-		DB: &database.Message{
-			ID:        networkid.MessageID(clientMessageID),
-			SenderID:  teamsUserIDToNetworkUserID(c.Meta.TeamsUserID),
-			Timestamp: now,
-		},
-		StreamOrder:   now.UnixMilli(),
-		RemovePending: networkid.TransactionID(clientMessageID),
-	}, nil
 }
 
 func (c *TeamsClient) ConnectBackground(ctx context.Context, _ *bridgev2.ConnectBackgroundParams) error {

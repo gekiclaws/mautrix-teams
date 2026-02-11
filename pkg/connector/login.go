@@ -12,6 +12,7 @@ import (
 	"maunium.net/go/mautrix/bridgev2/networkid"
 
 	"go.mau.fi/mautrix-teams/internal/teams/auth"
+	"go.mau.fi/mautrix-teams/pkg/teamsid"
 )
 
 const (
@@ -200,7 +201,7 @@ func (l *WebviewLocalStorageLogin) SubmitCookies(ctx context.Context, cookies ma
 	}, nil
 }
 
-func extractMetaFromStorage(ctx context.Context, raw string, clientID string) (*TeamsUserLoginMetadata, error) {
+func extractMetaFromStorage(ctx context.Context, raw string, clientID string) (*teamsid.UserLoginMetadata, error) {
 	state, err := auth.ExtractTokensFromMSALLocalStorage(raw, clientID)
 	if err != nil {
 		return nil, bridgev2.RespError{ErrCode: "FI.MAU.TEAMS_INVALID_STORAGE", Err: fmt.Sprintf("Failed to extract tokens: %v", err), StatusCode: http.StatusBadRequest}
@@ -220,7 +221,7 @@ func extractMetaFromStorage(ctx context.Context, raw string, clientID string) (*
 		return nil, bridgev2.RespError{ErrCode: "FI.MAU.TEAMS_MISSING_USER_ID", Err: "Teams user ID missing from skypetoken response", StatusCode: http.StatusBadRequest}
 	}
 
-	return &TeamsUserLoginMetadata{
+	return &teamsid.UserLoginMetadata{
 		RefreshToken:         state.RefreshToken,
 		AccessTokenExpiresAt: state.ExpiresAtUnix,
 		SkypeToken:           token,
