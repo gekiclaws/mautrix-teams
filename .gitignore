@@ -4,6 +4,7 @@
 
 *.db*
 *.log*
+.DS_Store
 
 /start
 synapse-data/localhost.signing.key
