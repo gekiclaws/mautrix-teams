@@ -4,6 +4,7 @@ package connector
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"strings"
 	"time"
@@ -410,6 +411,13 @@ func (c *TeamsClient) pollThread(ctx context.Context, th *teamsdb.ThreadState, n
 }
 
 const receiptPollInterval = 30 * time.Second
+const getLastMessagePartBySenderAtOrBeforeTimeQuery = `
+	SELECT id
+	FROM message
+	WHERE bridge_id=$1 AND room_id=$2 AND room_receiver=$3 AND sender_id=$4 AND timestamp<=$5
+	ORDER BY timestamp DESC, part_id DESC
+	LIMIT 1
+`
 
 func (c *TeamsClient) pollConsumptionHorizons(ctx context.Context, th *teamsdb.ThreadState, now time.Time) error {
 	if c == nil || c.Main == nil || c.Main.DB == nil || c.Login == nil || th == nil {
@@ -419,6 +427,7 @@ func (c *TeamsClient) pollConsumptionHorizons(ctx context.Context, th *teamsdb.T
 	if threadID == "" {
 		return nil
 	}
+	log := zerolog.Ctx(ctx).With().Str("thread_id", threadID).Logger()
 	if !c.shouldPollReceipts(threadID, now) {
 		return nil
 	}
@@ -470,10 +479,14 @@ func (c *TeamsClient) pollConsumptionHorizons(ctx context.Context, th *teamsdb.T
 	if state != nil && latestReadTS <= state.LastReadTS {
 		return nil
 	}
+	log.Debug().
+		Str("remote_user_id", remoteID).
+		Int64("latest_read_ts", latestReadTS).
+		Msg("consumption horizon advanced")
 
 	readUpTo := time.UnixMilli(latestReadTS).UTC()
 	portalKey := c.portalKey(threadID)
-	target, err := c.Main.Bridge.DB.Message.GetLastPartAtOrBeforeTime(ctx, portalKey, readUpTo)
+	targetID, err := c.getLastSentMessagePartAtOrBeforeTime(ctx, portalKey, teamsUserIDToNetworkUserID(selfID), readUpTo)
 	if err != nil {
 		return err
 	}
@@ -489,13 +502,38 @@ func (c *TeamsClient) pollConsumptionHorizons(ctx context.Context, th *teamsdb.T
 		},
 		ReadUpTo: readUpTo,
 	}
-	if target != nil && target.ID != "" {
-		receipt.LastTarget = target.ID
-		receipt.Targets = []networkid.MessageID{target.ID}
+	if targetID != "" {
+		receipt.LastTarget = targetID
+		receipt.Targets = []networkid.MessageID{targetID}
 	}
 	c.Login.QueueRemoteEvent(receipt)
 
 	return c.Main.DB.ConsumptionHorizon.UpsertLastRead(ctx, c.Login.ID, threadID, remoteID, latestReadTS)
+}
+
+func (c *TeamsClient) getLastSentMessagePartAtOrBeforeTime(ctx context.Context, portal networkid.PortalKey, senderID networkid.UserID, maxTS time.Time) (networkid.MessageID, error) {
+	if c == nil || c.Main == nil || c.Main.Bridge == nil || c.Main.Bridge.DB == nil {
+		return "", nil
+	}
+	if senderID == "" {
+		return "", nil
+	}
+	var msgID networkid.MessageID
+	err := c.Main.Bridge.DB.QueryRow(
+		ctx,
+		getLastMessagePartBySenderAtOrBeforeTimeQuery,
+		c.Main.Bridge.DB.BridgeID,
+		portal.ID,
+		portal.Receiver,
+		senderID,
+		maxTS.UnixNano(),
+	).Scan(&msgID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	} else if err != nil {
+		return "", err
+	}
+	return msgID, nil
 }
 
 func (c *TeamsClient) shouldPollReceipts(threadID string, now time.Time) bool {
