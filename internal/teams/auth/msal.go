@@ -116,36 +116,6 @@ func matchesMBITarget(target string) bool {
 	return strings.Contains(lower, mbiAccessTokenMarker)
 }
 
-func collectAccessTokenTargets(storage map[string]string, keys []string, limit int) []string {
-	if limit <= 0 {
-		return nil
-	}
-	out := make([]string, 0, limit)
-	seen := make(map[string]struct{})
-	for _, key := range keys {
-		if len(out) >= limit {
-			break
-		}
-		raw, ok := storage[key]
-		if !ok || raw == "" {
-			continue
-		}
-		var entry msalTokenEntry
-		if err := json.Unmarshal([]byte(raw), &entry); err != nil {
-			continue
-		}
-		if entry.Target == "" {
-			continue
-		}
-		if _, ok := seen[entry.Target]; ok {
-			continue
-		}
-		seen[entry.Target] = struct{}{}
-		out = append(out, entry.Target)
-	}
-	return out
-}
-
 func parseStorage(raw string) (map[string]string, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {

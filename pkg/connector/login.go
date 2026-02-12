@@ -15,96 +15,18 @@ import (
 )
 
 const (
-	FlowIDMSALLocalStorage    = "msal_localstorage"
 	FlowIDWebviewLocalStorage = "webview_localstorage"
 
-	LoginStepIDMSALLocalStorage    = "go.mau.teams.msal_localstorage"
 	LoginStepIDWebviewLocalStorage = "go.mau.teams.webview_localstorage"
 
 	teamsLoginSpecialStorage = "go.mau.teams.storage"
 	teamsLoginSpecialDebug   = "go.mau.teams.debug"
 )
 
-var loginFlowMSALLocalStorage = bridgev2.LoginFlow{
-	Name:        "teams.live.com (manual copy/paste)",
-	Description: "Login by copying browser localStorage JSON from Teams and pasting it.",
-	ID:          FlowIDMSALLocalStorage,
-}
-
 var loginFlowWebviewLocalStorage = bridgev2.LoginFlow{
 	Name:        "teams.live.com (in-app browser)",
 	Description: "Login using an embedded browser and automatic localStorage extraction.",
 	ID:          FlowIDWebviewLocalStorage,
-}
-
-type MSALLocalStorageLogin struct {
-	Main *TeamsConnector
-	User *bridgev2.User
-}
-
-var _ bridgev2.LoginProcessUserInput = (*MSALLocalStorageLogin)(nil)
-
-func (l *MSALLocalStorageLogin) Start(ctx context.Context) (*bridgev2.LoginStep, error) {
-	_ = ctx
-	clientID := resolveClientID(l.Main)
-	instructions := "1. Open https://teams.live.com/v2 in your browser and log in.\n" +
-		"2. Open browser devtools console.\n" +
-		"3. Run:\n" +
-		"   copy(JSON.stringify(Object.fromEntries(Object.entries(localStorage))))\n" +
-		"4. Paste the copied JSON below.\n\n" +
-		"Note: This flow looks for MSAL keys for client_id " + clientID + "."
-
-	return &bridgev2.LoginStep{
-		Type:         bridgev2.LoginStepTypeUserInput,
-		StepID:       LoginStepIDMSALLocalStorage,
-		Instructions: instructions,
-		UserInputParams: &bridgev2.LoginUserInputParams{
-			Fields: []bridgev2.LoginInputDataField{{
-				Type:        bridgev2.LoginInputFieldTypeToken,
-				ID:          "storage",
-				Name:        "localStorage JSON",
-				Description: "Paste the JSON dump of localStorage from https://teams.live.com/v2",
-			}},
-		},
-	}, nil
-}
-
-func (l *MSALLocalStorageLogin) Cancel() {}
-
-func (l *MSALLocalStorageLogin) SubmitUserInput(ctx context.Context, input map[string]string) (*bridgev2.LoginStep, error) {
-	if l == nil || l.Main == nil || l.User == nil {
-		return nil, errors.New("missing login state")
-	}
-	raw := strings.TrimSpace(input["storage"])
-	if raw == "" {
-		return nil, bridgev2.RespError{ErrCode: "FI.MAU.TEAMS_MISSING_STORAGE", Err: "Missing localStorage payload", StatusCode: http.StatusBadRequest}
-	}
-
-	clientID := resolveClientID(l.Main)
-	meta, err := ExtractTeamsLoginMetadataFromLocalStorage(ctx, raw, clientID)
-	if err != nil {
-		return nil, err
-	}
-	loginID := networkid.UserLoginID(meta.TeamsUserID)
-	ul, err := l.User.NewLogin(ctx, &database.UserLogin{
-		ID:         loginID,
-		RemoteName: meta.TeamsUserID,
-		Metadata:   meta,
-	}, &bridgev2.NewLoginParams{DeleteOnConflict: true})
-	if err != nil {
-		return nil, err
-	}
-	startLoginConnect(ul, loginConnectBaseCtx(l.Main))
-
-	return &bridgev2.LoginStep{
-		Type:         bridgev2.LoginStepTypeComplete,
-		StepID:       "go.mau.teams.complete",
-		Instructions: "Login complete.",
-		CompleteParams: &bridgev2.LoginCompleteParams{
-			UserLoginID: ul.ID,
-			UserLogin:   ul,
-		},
-	}, nil
 }
 
 type WebviewLocalStorageLogin struct {
