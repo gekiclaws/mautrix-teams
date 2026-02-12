@@ -12,6 +12,7 @@ import (
 	"maunium.net/go/mautrix/bridgev2/networkid"
 	"maunium.net/go/mautrix/event"
 
+	internalbridge "go.mau.fi/mautrix-teams/internal/bridge"
 	consumerclient "go.mau.fi/mautrix-teams/internal/teams/client"
 )
 
@@ -55,6 +56,21 @@ func (c *TeamsClient) HandleMatrixMessage(ctx context.Context, msg *bridgev2.Mat
 			return nil, bridgev2.ErrUnsupportedMessageType
 		}
 		_, err = consumer.SendGIFWithID(ctx, threadID, gifURL, title, c.Meta.TeamsUserID, clientMessageID)
+	case event.MsgFile:
+		// Matrix file messages are handled by downloading the MXC content and passing it to the attachment pipeline.
+		send := func(ctx context.Context, threadID, filename string, content []byte, caption string) error {
+			_, err := c.sendAttachmentMessageWithClientMessageID(ctx, threadID, filename, content, caption, clientMessageID)
+			return err
+		}
+		err = internalbridge.HandleOutboundMatrixFile(
+			ctx,
+			msg.Portal.MXID,
+			threadID,
+			msg.Content,
+			c.DownloadMatrixMedia,
+			send,
+			&c.Login.Log,
+		)
 	default:
 		return nil, bridgev2.ErrUnsupportedMessageType
 	}
