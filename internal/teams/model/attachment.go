@@ -7,6 +7,7 @@ import (
 
 type TeamsAttachment struct {
 	Filename    string
+	DriveItemID string
 	ShareURL    string
 	DownloadURL string
 	FileType    string
@@ -54,6 +55,7 @@ func ParseAttachments(raw string) ([]TeamsAttachment, bool) {
 	var payload []struct {
 		FileName string `json:"fileName"`
 		FileInfo struct {
+			ItemID   string `json:"itemId"`
 			ShareURL string `json:"shareUrl"`
 			FileURL  string `json:"fileUrl"`
 		} `json:"fileInfo"`
@@ -69,12 +71,16 @@ func ParseAttachments(raw string) ([]TeamsAttachment, bool) {
 	attachments := make([]TeamsAttachment, 0, len(payload))
 	for _, entry := range payload {
 		filename := strings.TrimSpace(entry.FileName)
+		driveItemID := strings.TrimSpace(entry.FileInfo.ItemID)
 		shareURL := strings.TrimSpace(entry.FileInfo.ShareURL)
-		if filename == "" || shareURL == "" {
+		// Keep attachments for which we have either a share URL (legacy rendering) or a drive item ID
+		// (inbound media re-upload).
+		if filename == "" || (shareURL == "" && driveItemID == "") {
 			continue
 		}
 		attachments = append(attachments, TeamsAttachment{
 			Filename:    filename,
+			DriveItemID: driveItemID,
 			ShareURL:    shareURL,
 			DownloadURL: strings.TrimSpace(entry.FileInfo.FileURL),
 			FileType:    strings.TrimSpace(entry.FileType),

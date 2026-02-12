@@ -26,7 +26,7 @@ func TestParseAttachmentsEmptyArray(t *testing.T) {
 }
 
 func TestParseAttachmentsSingle(t *testing.T) {
-	raw := `[{"fileName":"spec.pdf","fileInfo":{"shareUrl":"https://example.test/share","fileUrl":"https://example.test/download"},"fileType":"pdf"}]`
+	raw := `[{"fileName":"spec.pdf","fileInfo":{"itemId":"CID!sabc123","shareUrl":"https://example.test/share","fileUrl":"https://example.test/download"},"fileType":"pdf"}]`
 	attachments, ok := ParseAttachments(raw)
 	if !ok {
 		t.Fatalf("expected attachments")
@@ -36,6 +36,9 @@ func TestParseAttachmentsSingle(t *testing.T) {
 	}
 	if attachments[0].Filename != "spec.pdf" {
 		t.Fatalf("unexpected filename: %q", attachments[0].Filename)
+	}
+	if attachments[0].DriveItemID != "CID!sabc123" {
+		t.Fatalf("unexpected drive item id: %q", attachments[0].DriveItemID)
 	}
 	if attachments[0].ShareURL != "https://example.test/share" {
 		t.Fatalf("unexpected share url: %q", attachments[0].ShareURL)
@@ -50,10 +53,10 @@ func TestParseAttachmentsSingle(t *testing.T) {
 
 func TestParseAttachmentsMultipleAndSkipInvalid(t *testing.T) {
 	raw := `[
-		{"fileName":"first.txt","fileInfo":{"shareUrl":"https://example.test/first"}},
+		{"fileName":"first.txt","fileInfo":{"itemId":"CID!sfirst","shareUrl":"https://example.test/first"}},
 		{"fileName":"","fileInfo":{"shareUrl":"https://example.test/missing-name"}},
 		{"fileName":"missing-share.txt","fileInfo":{"shareUrl":""}},
-		{"fileName":"second.txt","fileInfo":{"shareUrl":"https://example.test/second"}}
+		{"fileName":"second.txt","fileInfo":{"itemId":"CID!ssecond","shareUrl":"https://example.test/second"}}
 	]`
 	attachments, ok := ParseAttachments(raw)
 	if !ok {
@@ -64,6 +67,20 @@ func TestParseAttachmentsMultipleAndSkipInvalid(t *testing.T) {
 	}
 	if attachments[0].Filename != "first.txt" || attachments[1].Filename != "second.txt" {
 		t.Fatalf("unexpected attachments: %#v", attachments)
+	}
+}
+
+func TestParseAttachmentsMissingShareURLButHasDriveItemID(t *testing.T) {
+	raw := `[{"fileName":"spec.pdf","fileInfo":{"itemId":"CID!sabc123","shareUrl":""}}]`
+	attachments, ok := ParseAttachments(raw)
+	if !ok || len(attachments) != 1 {
+		t.Fatalf("expected 1 attachment, got ok=%v attachments=%#v", ok, attachments)
+	}
+	if attachments[0].DriveItemID != "CID!sabc123" {
+		t.Fatalf("unexpected drive item id: %q", attachments[0].DriveItemID)
+	}
+	if attachments[0].ShareURL != "" {
+		t.Fatalf("expected empty share url, got %q", attachments[0].ShareURL)
 	}
 }
 

@@ -332,7 +332,7 @@ func TestListMessagesFilesParsing(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"messages":[` +
-			`{"id":"m1","sequenceId":"1","content":{"text":"hello"},"properties":{"files":"[{\"fileName\":\"spec.pdf\",\"fileInfo\":{\"shareUrl\":\"https://example.test/share\",\"fileUrl\":\"https://example.test/download\"},\"fileType\":\"pdf\"}]"}}` +
+			`{"id":"m1","sequenceId":"1","content":{"text":"hello"},"properties":{"files":"[{\"fileName\":\"spec.pdf\",\"fileInfo\":{\"itemId\":\"CID!sabc123\",\"shareUrl\":\"https://example.test/share\",\"fileUrl\":\"https://example.test/download\"},\"fileType\":\"pdf\"}]"}}` +
 			`]}`))
 	}))
 	defer server.Close()
@@ -357,6 +357,9 @@ func TestListMessagesFilesParsing(t *testing.T) {
 	}
 	if len(attachments) != 1 || attachments[0].Filename != "spec.pdf" {
 		t.Fatalf("unexpected attachments: %#v", attachments)
+	}
+	if attachments[0].DriveItemID != "CID!sabc123" {
+		t.Fatalf("unexpected drive item id: %#v", attachments[0].DriveItemID)
 	}
 }
 

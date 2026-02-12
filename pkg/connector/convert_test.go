@@ -66,7 +66,7 @@ func TestConvertTeamsMessageAddsPerMessageProfile(t *testing.T) {
 		SenderID:   "8:live:me",
 		SenderName: "Alice",
 	}
-	converted, err := convertTeamsMessage(context.Background(), nil, nil, msg)
+	converted, err := (&TeamsClient{}).convertTeamsMessage(context.Background(), nil, nil, msg)
 	if err != nil {
 		t.Fatalf("convertTeamsMessage failed: %v", err)
 	}
