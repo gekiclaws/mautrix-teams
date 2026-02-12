@@ -74,18 +74,26 @@ func ExtractSenderID(raw json.RawMessage) string {
 	}
 	var plain string
 	if err := json.Unmarshal(raw, &plain); err == nil {
-		if idx := strings.LastIndex(plain, "/"); idx >= 0 && idx+1 < len(plain) {
-			return plain[idx+1:]
-		}
-		return plain
+		return extractSenderIDValue(plain)
 	}
 	var obj struct {
 		ID string `json:"id"`
 	}
 	if err := json.Unmarshal(raw, &obj); err == nil {
-		return obj.ID
+		return extractSenderIDValue(obj.ID)
 	}
 	return ""
+}
+
+func extractSenderIDValue(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if idx := strings.LastIndex(value, "/"); idx >= 0 && idx+1 < len(value) {
+		return value[idx+1:]
+	}
+	return value
 }
 
 func ExtractSenderName(raw json.RawMessage) string {

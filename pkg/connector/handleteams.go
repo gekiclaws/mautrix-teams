@@ -23,6 +23,7 @@ import (
 
 const (
 	threadDiscoveryInterval = 30 * time.Second
+	selfMessageTTL          = 5 * time.Minute
 )
 
 func (c *TeamsClient) startSyncLoop() {
@@ -317,6 +318,10 @@ func (c *TeamsClient) pollThread(ctx context.Context, th *teamsdb.ThreadState, n
 	var maxSeq string
 	var maxTS int64
 	ingested := 0
+	selfID := ""
+	if c.Meta != nil {
+		selfID = model.NormalizeTeamsUserID(c.Meta.TeamsUserID)
+	}
 
 	for _, msg := range msgs {
 		if strings.TrimSpace(msg.MessageID) == "" {
@@ -346,7 +351,7 @@ func (c *TeamsClient) pollThread(ctx context.Context, th *teamsdb.ThreadState, n
 		}
 
 		es := bridgev2.EventSender{Sender: teamsUserIDToNetworkUserID(senderID)}
-		if senderID != "" && strings.TrimSpace(c.Meta.TeamsUserID) != "" && senderID == c.Meta.TeamsUserID {
+		if senderID != "" && selfID != "" && senderID == selfID {
 			es.IsFromMe = true
 			es.SenderLogin = c.Login.ID
 			if strings.TrimSpace(msg.ClientMessageID) != "" {
@@ -357,6 +362,19 @@ func (c *TeamsClient) pollThread(ctx context.Context, th *teamsdb.ThreadState, n
 			c.markReactionSeen(effectiveMessageID, true)
 		}
 		c.queueReactionSyncForMessage(ctx, th, msg, effectiveMessageID)
+
+		clientMessageID := strings.TrimSpace(msg.ClientMessageID)
+		isSelfEcho := senderID != "" && selfID != "" && senderID == selfID && c.consumeSelfMessage(clientMessageID)
+		if maxSeq == "" || model.CompareSequenceID(strings.TrimSpace(msg.SequenceID), maxSeq) > 0 {
+			maxSeq = strings.TrimSpace(msg.SequenceID)
+		}
+		if ts := msg.Timestamp.UnixMilli(); ts > maxTS {
+			maxTS = ts
+		}
+		ingested++
+		if isSelfEcho {
+			continue
+		}
 
 		eventMessageID := effectiveMessageID
 		if eventMessageID == "" {
@@ -373,20 +391,12 @@ func (c *TeamsClient) pollThread(ctx context.Context, th *teamsdb.ThreadState, n
 			},
 			Data:               msg,
 			ID:                 networkid.MessageID(eventMessageID),
-			TransactionID:      networkid.TransactionID(strings.TrimSpace(msg.ClientMessageID)),
+			TransactionID:      networkid.TransactionID(clientMessageID),
 			ConvertMessageFunc: convertTeamsMessage,
 		}
 		c.Login.QueueRemoteEvent(evt)
-		ingested++
 		if !es.IsFromMe && strings.TrimSpace(th.ThreadID) != "" {
 			c.markUnread(th.ThreadID)
-		}
-
-		if maxSeq == "" || model.CompareSequenceID(strings.TrimSpace(msg.SequenceID), maxSeq) > 0 {
-			maxSeq = strings.TrimSpace(msg.SequenceID)
-		}
-		if ts := msg.Timestamp.UnixMilli(); ts > maxTS {
-			maxTS = ts
 		}
 	}
 

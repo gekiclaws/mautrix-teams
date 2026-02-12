@@ -55,6 +55,7 @@ func (c *TeamsClient) HandleMatrixMessage(ctx context.Context, msg *bridgev2.Mat
 	if err != nil {
 		return nil, err
 	}
+	c.recordSelfMessage(clientMessageID)
 
 	return &bridgev2.MatrixMessageResponse{
 		DB: &database.Message{

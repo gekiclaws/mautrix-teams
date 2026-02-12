@@ -42,6 +42,8 @@ type TeamsClient struct {
 	unreadMu      sync.Mutex
 	unreadSeen    map[string]bool
 	unreadSent    map[string]bool
+	selfMessageMu sync.Mutex
+	selfMessages  map[string]time.Time
 }
 
 var (
@@ -224,6 +226,51 @@ func (c *TeamsClient) newConsumer() *consumerclient.Client {
 		consumer.Token = c.Meta.SkypeToken
 	}
 	return consumer
+}
+
+func (c *TeamsClient) recordSelfMessage(clientMessageID string) {
+	clientMessageID = strings.TrimSpace(clientMessageID)
+	if clientMessageID == "" {
+		return
+	}
+	c.selfMessageMu.Lock()
+	defer c.selfMessageMu.Unlock()
+	now := time.Now().UTC()
+	if c.selfMessages == nil {
+		c.selfMessages = make(map[string]time.Time)
+	}
+	c.cleanupSelfMessagesLocked(now)
+	c.selfMessages[clientMessageID] = now
+}
+
+func (c *TeamsClient) consumeSelfMessage(clientMessageID string) bool {
+	clientMessageID = strings.TrimSpace(clientMessageID)
+	if clientMessageID == "" {
+		return false
+	}
+	c.selfMessageMu.Lock()
+	defer c.selfMessageMu.Unlock()
+	if c.selfMessages == nil {
+		return false
+	}
+	now := time.Now().UTC()
+	c.cleanupSelfMessagesLocked(now)
+	_, exists := c.selfMessages[clientMessageID]
+	if exists {
+		delete(c.selfMessages, clientMessageID)
+	}
+	return exists
+}
+
+func (c *TeamsClient) cleanupSelfMessagesLocked(now time.Time) {
+	if c.selfMessages == nil {
+		return
+	}
+	for id, ts := range c.selfMessages {
+		if now.Sub(ts) > selfMessageTTL {
+			delete(c.selfMessages, id)
+		}
+	}
 }
 
 func ptrString(v string) *string { return &v }
