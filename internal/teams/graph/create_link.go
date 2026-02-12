@@ -94,6 +94,9 @@ func (c *GraphClient) CreateShareLink(ctx context.Context, listItemUniqueID stri
 
 	resp, err := executor.Do(ctx, req, classifyCreateLinkResponse)
 	if err != nil {
+		if resp != nil && resp.Body != nil {
+			_ = resp.Body.Close()
+		}
 		return nil, err
 	}
 	defer resp.Body.Close()

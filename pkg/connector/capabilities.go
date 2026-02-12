@@ -13,5 +13,5 @@ func (t *TeamsConnector) GetCapabilities() *bridgev2.NetworkGeneralCapabilities 
 }
 
 func (t *TeamsConnector) GetBridgeInfoVersion() (info, capabilities int) {
-	return 1, 7
+	return 1, 8
 }

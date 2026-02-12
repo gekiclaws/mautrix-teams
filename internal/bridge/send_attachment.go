@@ -14,7 +14,9 @@ import (
 	"go.mau.fi/mautrix-teams/internal/teams/graph"
 )
 
-const MaxAttachmentBytesV0 = 10 * 1024 * 1024
+// MaxAttachmentBytesV0 is an in-memory cap: attachments are currently buffered as []byte.
+// Keep this reasonably sized even though Graph upload sessions support much larger files.
+const MaxAttachmentBytesV0 = 100 * 1024 * 1024
 
 type GraphAPI interface {
 	UploadTeamsChatFile(ctx context.Context, filename string, content []byte) (*graph.UploadedDriveItem, error)

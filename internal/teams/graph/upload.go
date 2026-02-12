@@ -20,7 +20,15 @@ import (
 const (
 	defaultUploadEndpoint = "https://graph.microsoft.com/v1.0/me/drive/root:/Microsoft Teams Chat Files"
 	maxUploadErrorBytes   = 1024
-	defaultMaxUploadBytes = 10 * 1024 * 1024
+	defaultMaxUploadBytes = 100 * 1024 * 1024
+
+	// DefaultSmallFileLimit is a conservative limit for the simple PUT upload flow.
+	// Larger payloads should use createUploadSession + chunked upload.
+	DefaultSmallFileLimit = 4 * 1024 * 1024
+
+	// DefaultChunkSize is Graph-safe (and a multiple of 320 KiB).
+	DefaultChunkSize = 5 * 1024 * 1024
+	chunkSizeAlign   = 320 * 1024
 )
 
 var (
@@ -52,12 +60,14 @@ func (e GraphUploadError) Error() string {
 }
 
 type GraphClient struct {
-	HTTP          *http.Client
-	Executor      *teamsclient.TeamsRequestExecutor
-	Log           *zerolog.Logger
-	AccessToken   string
-	UploadBaseURL string
-	MaxUploadSize int
+	HTTP           *http.Client
+	Executor       *teamsclient.TeamsRequestExecutor
+	Log            *zerolog.Logger
+	AccessToken    string
+	UploadBaseURL  string
+	MaxUploadSize  int
+	SmallFileLimit int
+	ChunkSize      int
 }
 
 func NewClient(httpClient *http.Client) *GraphClient {
@@ -69,10 +79,12 @@ func NewClient(httpClient *http.Client) *GraphClient {
 		MaxBackoff:  10 * time.Second,
 	}
 	return &GraphClient{
-		HTTP:          httpClient,
-		Executor:      executor,
-		UploadBaseURL: defaultUploadEndpoint,
-		MaxUploadSize: defaultMaxUploadBytes,
+		HTTP:           httpClient,
+		Executor:       executor,
+		UploadBaseURL:  defaultUploadEndpoint,
+		MaxUploadSize:  defaultMaxUploadBytes,
+		SmallFileLimit: DefaultSmallFileLimit,
+		ChunkSize:      DefaultChunkSize,
 	}
 }
 
@@ -97,6 +109,18 @@ func (c *GraphClient) UploadTeamsChatFile(ctx context.Context, filename string, 
 		return nil, ErrUploadContentTooLarge
 	}
 
+	smallLimit := c.SmallFileLimit
+	if smallLimit <= 0 {
+		smallLimit = DefaultSmallFileLimit
+	}
+	if len(content) > smallLimit {
+		uploadURL, err := c.CreateUploadSession(ctx, filename)
+		if err != nil {
+			return nil, err
+		}
+		return c.UploadFileInChunks(ctx, uploadURL, content)
+	}
+
 	endpoint, err := c.uploadURL(filename)
 	if err != nil {
 		return nil, err
@@ -108,30 +132,20 @@ func (c *GraphClient) UploadTeamsChatFile(ctx context.Context, filename string, 
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(c.AccessToken))
 	req.Header.Set("Content-Type", "application/octet-stream")
 
-	executor := c.Executor
-	if executor == nil {
-		executor = &teamsclient.TeamsRequestExecutor{
-			HTTP:        c.HTTP,
-			Log:         zerolog.Nop(),
-			MaxRetries:  4,
-			BaseBackoff: 500 * time.Millisecond,
-			MaxBackoff:  10 * time.Second,
-		}
-		c.Executor = executor
-	}
-	if executor.HTTP == nil {
-		executor.HTTP = c.HTTP
-	}
-	if c.Log != nil {
-		executor.Log = *c.Log
-	}
+	executor := c.executor()
 
 	resp, err := executor.Do(ctx, req, classifyUploadResponse)
 	if err != nil {
+		if resp != nil && resp.Body != nil {
+			_ = resp.Body.Close()
+		}
 		return nil, err
 	}
 	defer resp.Body.Close()
+	return parseUploadedDriveItem(resp.Body)
+}
 
+func parseUploadedDriveItem(r io.Reader) (*UploadedDriveItem, error) {
 	var payload struct {
 		ID            string `json:"id"`
 		Name          string `json:"name"`
@@ -145,7 +159,7 @@ func (c *GraphClient) UploadTeamsChatFile(ctx context.Context, filename string, 
 			} `json:"sharepointIds"`
 		} `json:"parentReference"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+	if err := json.NewDecoder(r).Decode(&payload); err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(payload.ID) == "" {
@@ -175,7 +189,7 @@ func (c *GraphClient) uploadURL(filename string) (string, error) {
 	endpoint := strings.TrimRight(base, "/") + "/" + escapedName + ":/content"
 	q := url.Values{}
 	q.Set("@microsoft.graph.conflictBehavior", "rename")
-	q.Set("select", "*,sharepointIds")
+	q.Set("$select", "*,sharepointIds")
 	return endpoint + "?" + q.Encode(), nil
 }
 
@@ -215,4 +229,25 @@ func parseRetryAfter(value string) time.Duration {
 		}
 	}
 	return 0
+}
+
+func (c *GraphClient) executor() *teamsclient.TeamsRequestExecutor {
+	executor := c.Executor
+	if executor == nil {
+		executor = &teamsclient.TeamsRequestExecutor{
+			HTTP:        c.HTTP,
+			Log:         zerolog.Nop(),
+			MaxRetries:  4,
+			BaseBackoff: 500 * time.Millisecond,
+			MaxBackoff:  10 * time.Second,
+		}
+		c.Executor = executor
+	}
+	if executor.HTTP == nil {
+		executor.HTTP = c.HTTP
+	}
+	if c.Log != nil {
+		executor.Log = *c.Log
+	}
+	return executor
 }
