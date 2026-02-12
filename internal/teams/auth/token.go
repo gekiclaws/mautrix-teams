@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -56,6 +57,9 @@ func (c *Client) tokenRequest(ctx context.Context, values url.Values) (*AuthStat
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if origin := redirectOrigin(c.RedirectURI); origin != "" {
+		req.Header.Set("Origin", origin)
+	}
 
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
@@ -65,10 +69,17 @@ func (c *Client) tokenRequest(ctx context.Context, values url.Values) (*AuthStat
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(resp.Body)
-		if c.Log != nil {
-			c.Log.Error().Int("status", resp.StatusCode).Str("body", string(body)).Msg("Token endpoint error")
+		snippet := strings.TrimSpace(string(body))
+		if len(snippet) > 400 {
+			snippet = snippet[:400] + "...(truncated)"
 		}
-		return nil, errors.New("token endpoint returned non-2xx status")
+		if c.Log != nil {
+			c.Log.Error().Int("status", resp.StatusCode).Str("body", snippet).Msg("Token endpoint error")
+		}
+		if snippet == "" {
+			return nil, fmt.Errorf("token endpoint returned non-2xx status: %d", resp.StatusCode)
+		}
+		return nil, fmt.Errorf("token endpoint returned non-2xx status: %d body=%s", resp.StatusCode, snippet)
 	}
 
 	var payload tokenResponse
@@ -87,4 +98,15 @@ func (c *Client) tokenRequest(ctx context.Context, values url.Values) (*AuthStat
 		state.ExpiresAtUnix = time.Now().Add(time.Duration(payload.ExpiresIn) * time.Second).UTC().Unix()
 	}
 	return state, nil
+}
+
+func redirectOrigin(redirectURI string) string {
+	if strings.TrimSpace(redirectURI) == "" {
+		return ""
+	}
+	parsed, err := url.Parse(redirectURI)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return ""
+	}
+	return parsed.Scheme + "://" + parsed.Host
 }

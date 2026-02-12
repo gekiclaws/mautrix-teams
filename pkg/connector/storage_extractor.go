@@ -11,6 +11,8 @@ import (
 	"maunium.net/go/mautrix/bridgev2"
 )
 
+const mbiRefreshScope = "service::api.fl.spaces.skype.com::MBI_SSL"
+
 // ExtractTeamsLoginMetadataFromLocalStorage parses the MSAL localStorage payload
 // and exchanges its access token for a Teams skypetoken.
 func ExtractTeamsLoginMetadataFromLocalStorage(ctx context.Context, rawStorage, clientID string) (*teamsid.UserLoginMetadata, error) {
@@ -28,7 +30,7 @@ func ExtractTeamsLoginMetadataFromLocalStorage(ctx context.Context, rawStorage, 
 		if refreshToken == "" {
 			return nil, bridgev2.RespError{ErrCode: "FI.MAU.TEAMS_MISSING_ACCESS_TOKEN", Err: "Access token missing from extracted state", StatusCode: http.StatusBadRequest}
 		}
-		refreshed, refreshErr := authClient.RefreshAccessToken(ctx, refreshToken)
+		refreshed, refreshErr := refreshAccessTokenForSkypeScope(ctx, authClient, refreshToken)
 		if refreshErr != nil {
 			return nil, bridgev2.RespError{ErrCode: "FI.MAU.TEAMS_MISSING_ACCESS_TOKEN", Err: fmt.Sprintf("Access token missing from localStorage and refresh failed: %v", refreshErr), StatusCode: http.StatusBadRequest}
 		}
@@ -61,6 +63,24 @@ func ExtractTeamsLoginMetadataFromLocalStorage(ctx context.Context, rawStorage, 
 		SkypeTokenExpiresAt:  expiresAt,
 		TeamsUserID:          teamsUserID,
 	}, nil
+}
+
+func refreshAccessTokenForSkypeScope(ctx context.Context, client *auth.Client, refreshToken string) (*auth.AuthState, error) {
+	// Prefer requesting the Skype MBI scope explicitly for skypetoken bootstrap.
+	retryClient := *client
+	retryClient.Scopes = []string{mbiRefreshScope, "offline_access"}
+	refreshed, err := retryClient.RefreshAccessToken(ctx, refreshToken)
+	if err == nil {
+		return refreshed, nil
+	}
+
+	// Fallback to default scopes for environments that don't accept MBI scope on refresh.
+	refreshed, fallbackErr := client.RefreshAccessToken(ctx, refreshToken)
+	if fallbackErr == nil {
+		return refreshed, nil
+	}
+
+	return nil, fmt.Errorf("MBI scope refresh failed (%v); default scopes failed (%v)", err, fallbackErr)
 }
 
 func resolveClientID(main *TeamsConnector) string {

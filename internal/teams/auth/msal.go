@@ -62,16 +62,11 @@ func ExtractTokensFromMSALLocalStorage(raw string, clientID string) (*AuthState,
 
 	if len(keys.AccessToken) > 0 {
 		accessToken, expiresAt := selectMBIAccessToken(storage, keys.AccessToken)
-		if accessToken == "" {
-			targets := collectAccessTokenTargets(storage, keys.AccessToken, 6)
-			if len(targets) == 0 {
-				return nil, errors.New("MBI_SSL access token not found in localStorage")
+		if accessToken != "" {
+			state.AccessToken = accessToken
+			if expiresAt != 0 {
+				state.ExpiresAtUnix = expiresAt
 			}
-			return nil, errors.New("MBI_SSL access token not found in localStorage; observed targets: " + strings.Join(targets, ", "))
-		}
-		state.AccessToken = accessToken
-		if expiresAt != 0 {
-			state.ExpiresAtUnix = expiresAt
 		}
 	}
 
