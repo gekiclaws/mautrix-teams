@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -48,11 +50,17 @@ func (c *Client) AcquireSkypeToken(ctx context.Context, accessToken string) (str
 	defer resp.Body.Close()
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		snippet := readBodySnippet(resp.Body, skypeTokenErrorSnippetLimit)
+		snippet := strings.TrimSpace(readBodySnippet(resp.Body, skypeTokenErrorSnippetLimit))
+		if len(snippet) > 400 {
+			snippet = snippet[:400] + "...(truncated)"
+		}
 		if c.Log != nil {
 			c.Log.Error().Int("status", resp.StatusCode).Str("body_snippet", snippet).Msg("Failed to acquire skypetoken")
 		}
-		return "", 0, "", errors.New("skypetoken endpoint returned non-2xx status")
+		if snippet == "" {
+			return "", 0, "", fmt.Errorf("skypetoken endpoint returned non-2xx status: %d", resp.StatusCode)
+		}
+		return "", 0, "", fmt.Errorf("skypetoken endpoint returned non-2xx status: %d body=%s", resp.StatusCode, snippet)
 	}
 
 	var payload skypeTokenResponse

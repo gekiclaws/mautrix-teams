@@ -84,3 +84,24 @@ func TestTokenExchange(t *testing.T) {
 		t.Fatalf("expiry too soon")
 	}
 }
+
+func TestRefreshAccessTokenSetsOriginHeader(t *testing.T) {
+	var gotOrigin string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotOrigin = r.Header.Get("Origin")
+		_, _ = w.Write([]byte(`{"access_token":"access","refresh_token":"refresh","expires_in":3600}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(nil)
+	client.TokenEndpoint = server.URL
+	client.RedirectURI = "https://teams.live.com/v2"
+
+	_, err := client.RefreshAccessToken(context.Background(), "refresh")
+	if err != nil {
+		t.Fatalf("RefreshAccessToken failed: %v", err)
+	}
+	if gotOrigin != "https://teams.live.com" {
+		t.Fatalf("unexpected origin header: %s", gotOrigin)
+	}
+}
