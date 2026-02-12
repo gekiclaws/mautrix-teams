@@ -15,6 +15,7 @@ import (
 	"maunium.net/go/mautrix/bridgev2/status"
 	"maunium.net/go/mautrix/event"
 
+	internalbridge "go.mau.fi/mautrix-teams/internal/bridge"
 	"go.mau.fi/mautrix-teams/internal/teams/auth"
 	consumerclient "go.mau.fi/mautrix-teams/internal/teams/client"
 	"go.mau.fi/mautrix-teams/pkg/teamsid"
@@ -177,7 +178,16 @@ func (c *TeamsClient) GetCapabilities(ctx context.Context, portal *bridgev2.Port
 	_ = ctx
 	_ = portal
 	return &event.RoomFeatures{
-		ID:                     "fi.mau.teams.capabilities.2026_02_11",
+		ID: "fi.mau.teams.capabilities.2026_02_12",
+		File: event.FileFeatureMap{
+			event.MsgFile: &event.FileFeatures{
+				MimeTypes: map[string]event.CapabilitySupportLevel{
+					"*/*": event.CapLevelFullySupported,
+				},
+				Caption: event.CapLevelFullySupported,
+				MaxSize: internalbridge.MaxAttachmentBytesV0,
+			},
+		},
 		Reaction:               event.CapLevelFullySupported,
 		TypingNotifications:    true,
 		ReadReceipts:           true,
