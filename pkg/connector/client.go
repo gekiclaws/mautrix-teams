@@ -3,6 +3,7 @@ package connector
 import (
 	"context"
 	"errors"
+	"net/http"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -26,8 +27,8 @@ type TeamsClient struct {
 
 	loggedIn atomic.Bool
 
-	consumerMu sync.Mutex
-	consumer   *consumerclient.Client
+	consumerHTTPMu sync.Mutex
+	consumerHTTP   *http.Client
 
 	syncMu     sync.Mutex
 	syncCancel context.CancelFunc
@@ -193,18 +194,36 @@ func (c *TeamsClient) ConnectBackground(ctx context.Context, _ *bridgev2.Connect
 	return c.syncOnce(ctx)
 }
 
-func (c *TeamsClient) getConsumer() *consumerclient.Client {
-	if c == nil || c.Main == nil {
+func (c *TeamsClient) getConsumerHTTP() *http.Client {
+	if c == nil {
 		return nil
 	}
-	c.consumerMu.Lock()
-	defer c.consumerMu.Unlock()
-	if c.consumer != nil {
-		return c.consumer
+	c.consumerHTTPMu.Lock()
+	defer c.consumerHTTPMu.Unlock()
+	if c.consumerHTTP != nil {
+		return c.consumerHTTP
 	}
 	authClient := auth.NewClient(nil)
-	c.consumer = consumerclient.NewClient(authClient.HTTP)
-	return c.consumer
+	c.consumerHTTP = authClient.HTTP
+	return c.consumerHTTP
+}
+
+func (c *TeamsClient) newConsumer() *consumerclient.Client {
+	if c == nil {
+		return nil
+	}
+	httpClient := c.getConsumerHTTP()
+	if httpClient == nil {
+		return nil
+	}
+	consumer := consumerclient.NewClient(httpClient)
+	if c.Login != nil {
+		consumer.Log = &c.Login.Log
+	}
+	if c.Meta != nil {
+		consumer.Token = c.Meta.SkypeToken
+	}
+	return consumer
 }
 
 func ptrString(v string) *string { return &v }

@@ -23,8 +23,6 @@ import (
 
 const (
 	threadDiscoveryInterval = 10 * time.Minute
-	basePollInterval        = 2 * time.Second
-	maxPollInterval         = 30 * time.Second
 )
 
 func (c *TeamsClient) startSyncLoop() {
@@ -172,7 +170,7 @@ func (c *TeamsClient) refreshThreads(ctx context.Context) error {
 		return err
 	}
 
-	consumer := c.getConsumer()
+	consumer := c.newConsumer()
 	if consumer == nil {
 		return errors.New("missing consumer client")
 	}
@@ -220,7 +218,7 @@ func ptrRoomType(isOneToOne bool) *database.RoomType {
 }
 
 type pollState struct {
-	delay    time.Duration
+	backoff  PollBackoff
 	nextPoll time.Time
 }
 
@@ -230,7 +228,7 @@ func (c *TeamsClient) pollAllThreadsOnce(ctx context.Context) error {
 		return err
 	}
 	for _, th := range threads {
-		_ = c.pollThread(ctx, th, time.Now().UTC())
+		_, _ = c.pollThread(ctx, th, time.Now().UTC())
 	}
 	return nil
 }
@@ -249,7 +247,7 @@ func (c *TeamsClient) pollDueThreads(ctx context.Context) error {
 		if th == nil || th.ThreadID == "" {
 			continue
 		}
-		states[th.ThreadID] = &pollState{delay: basePollInterval, nextPoll: time.Now().UTC()}
+		states[th.ThreadID] = &pollState{backoff: PollBackoff{Delay: pollBaseDelay}, nextPoll: time.Now().UTC()}
 	}
 
 	for {
@@ -269,7 +267,7 @@ func (c *TeamsClient) pollDueThreads(ctx context.Context) error {
 			}
 			ps := states[th.ThreadID]
 			if ps == nil {
-				ps = &pollState{delay: basePollInterval, nextPoll: now}
+				ps = &pollState{backoff: PollBackoff{Delay: pollBaseDelay}, nextPoll: now}
 				states[th.ThreadID] = ps
 			}
 			if now.Before(ps.nextPoll) {
@@ -279,17 +277,9 @@ func (c *TeamsClient) pollDueThreads(ctx context.Context) error {
 				continue
 			}
 
-			err := c.pollThread(ctx, th, now)
-			if err != nil {
-				ps.delay *= 2
-				if ps.delay > maxPollInterval {
-					ps.delay = maxPollInterval
-				}
-				ps.nextPoll = now.Add(ps.delay)
-			} else {
-				ps.delay = basePollInterval
-				ps.nextPoll = now.Add(basePollInterval)
-			}
+			ingested, err := c.pollThread(ctx, th, now)
+			delay, _ := ApplyPollBackoff(&ps.backoff, ingested, err)
+			ps.nextPoll = now.Add(delay)
 			if ps.nextPoll.Before(nextWake) {
 				nextWake = ps.nextPoll
 			}
@@ -309,28 +299,28 @@ func (c *TeamsClient) pollDueThreads(ctx context.Context) error {
 	}
 }
 
-func (c *TeamsClient) pollThread(ctx context.Context, th *teamsdb.ThreadState, now time.Time) error {
+func (c *TeamsClient) pollThread(ctx context.Context, th *teamsdb.ThreadState, now time.Time) (int, error) {
 	if c == nil || th == nil {
-		return nil
+		return 0, nil
 	}
 	if err := c.ensureValidSkypeToken(ctx); err != nil {
 		c.Login.BridgeState.Send(status.BridgeState{StateEvent: status.StateBadCredentials, Message: err.Error(), UserAction: status.UserActionRelogin})
-		return err
+		return 0, err
 	}
-	consumer := c.getConsumer()
+	consumer := c.newConsumer()
 	if consumer == nil {
-		return errors.New("missing consumer client")
+		return 0, errors.New("missing consumer client")
 	}
-	consumer.Token = c.Meta.SkypeToken
 
 	msgs, err := consumer.ListMessages(ctx, th.Conversation, th.LastSequenceID)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	lastSeq := strings.TrimSpace(th.LastSequenceID)
 	var maxSeq string
 	var maxTS int64
+	ingested := 0
 
 	for _, msg := range msgs {
 		if strings.TrimSpace(msg.MessageID) == "" {
@@ -391,6 +381,7 @@ func (c *TeamsClient) pollThread(ctx context.Context, th *teamsdb.ThreadState, n
 			ConvertMessageFunc: convertTeamsMessage,
 		}
 		c.Login.QueueRemoteEvent(evt)
+		ingested++
 		if !es.IsFromMe && strings.TrimSpace(th.ThreadID) != "" {
 			c.markUnread(th.ThreadID)
 		}
@@ -409,7 +400,7 @@ func (c *TeamsClient) pollThread(ctx context.Context, th *teamsdb.ThreadState, n
 		th.LastMessageTS = maxTS
 	}
 	_ = c.pollConsumptionHorizons(ctx, th, now)
-	return nil
+	return ingested, nil
 }
 
 const receiptPollInterval = 30 * time.Second
@@ -426,11 +417,10 @@ func (c *TeamsClient) pollConsumptionHorizons(ctx context.Context, th *teamsdb.T
 		return nil
 	}
 
-	consumer := c.getConsumer()
+	consumer := c.newConsumer()
 	if consumer == nil {
 		return errors.New("missing consumer client")
 	}
-	consumer.Token = c.Meta.SkypeToken
 
 	resp, err := consumer.GetConsumptionHorizons(ctx, threadID)
 	if err != nil || resp == nil {

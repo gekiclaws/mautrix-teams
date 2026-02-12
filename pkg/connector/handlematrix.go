@@ -30,11 +30,10 @@ func (c *TeamsClient) HandleMatrixMessage(ctx context.Context, msg *bridgev2.Mat
 		return nil, errors.New("missing thread id")
 	}
 
-	consumer := c.getConsumer()
+	consumer := c.newConsumer()
 	if consumer == nil {
 		return nil, errors.New("missing consumer client")
 	}
-	consumer.Token = c.Meta.SkypeToken
 
 	clientMessageID := consumerclient.GenerateClientMessageID()
 	msg.AddPendingToIgnore(networkid.TransactionID(clientMessageID))
@@ -133,11 +132,10 @@ func (c *TeamsClient) HandleMatrixReaction(ctx context.Context, msg *bridgev2.Ma
 		}
 	}
 
-	consumer := c.getConsumer()
+	consumer := c.newConsumer()
 	if consumer == nil {
 		return nil, errors.New("missing consumer client")
 	}
-	consumer.Token = c.Meta.SkypeToken
 
 	teamsMessageID := NormalizeTeamsReactionTargetMessageID(string(msg.TargetMessage.ID))
 	if teamsMessageID == "" {
@@ -178,11 +176,10 @@ func (c *TeamsClient) HandleMatrixReactionRemove(ctx context.Context, msg *bridg
 		}
 	}
 
-	consumer := c.getConsumer()
+	consumer := c.newConsumer()
 	if consumer == nil {
 		return errors.New("missing consumer client")
 	}
-	consumer.Token = c.Meta.SkypeToken
 
 	teamsMessageID := NormalizeTeamsReactionTargetMessageID(string(msg.TargetReaction.MessageID))
 	if teamsMessageID == "" {
@@ -206,11 +203,10 @@ func (c *TeamsClient) HandleMatrixTyping(ctx context.Context, msg *bridgev2.Matr
 	if threadID == "" {
 		return errors.New("missing thread id")
 	}
-	consumer := c.getConsumer()
+	consumer := c.newConsumer()
 	if consumer == nil {
 		return errors.New("missing consumer client")
 	}
-	consumer.Token = c.Meta.SkypeToken
 	_, err := consumer.SendTypingIndicator(ctx, threadID, c.Meta.TeamsUserID)
 	return err
 }
@@ -232,11 +228,10 @@ func (c *TeamsClient) HandleMatrixReadReceipt(ctx context.Context, msg *bridgev2
 	if !c.shouldSendReceipt(threadID) {
 		return nil
 	}
-	consumer := c.getConsumer()
+	consumer := c.newConsumer()
 	if consumer == nil {
 		return errors.New("missing consumer client")
 	}
-	consumer.Token = c.Meta.SkypeToken
 	horizon := consumerclient.ConsumptionHorizonNow(time.Now().UTC())
 	_, err := consumer.SetConsumptionHorizon(ctx, threadID, horizon)
 	return err
