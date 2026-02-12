@@ -36,9 +36,15 @@ func (c *TeamsClient) HandleMatrixMessage(ctx context.Context, msg *bridgev2.Mat
 	}
 
 	clientMessageID := consumerclient.GenerateClientMessageID()
-	msg.AddPendingToIgnore(networkid.TransactionID(clientMessageID))
 
 	now := time.Now().UTC()
+	pendingMessage := &database.Message{
+		ID:        networkid.MessageID(clientMessageID),
+		SenderID:  teamsUserIDToNetworkUserID(c.Meta.TeamsUserID),
+		Timestamp: now,
+	}
+	msg.AddPendingToSave(pendingMessage, networkid.TransactionID(clientMessageID), nil)
+
 	var err error
 	switch msg.Content.MsgType {
 	case event.MsgText:
@@ -53,18 +59,15 @@ func (c *TeamsClient) HandleMatrixMessage(ctx context.Context, msg *bridgev2.Mat
 		return nil, bridgev2.ErrUnsupportedMessageType
 	}
 	if err != nil {
+		msg.RemovePending(networkid.TransactionID(clientMessageID))
 		return nil, err
 	}
 	c.recordSelfMessage(clientMessageID)
 
 	return &bridgev2.MatrixMessageResponse{
-		DB: &database.Message{
-			ID:        networkid.MessageID(clientMessageID),
-			SenderID:  teamsUserIDToNetworkUserID(c.Meta.TeamsUserID),
-			Timestamp: now,
-		},
-		StreamOrder:   now.UnixMilli(),
-		RemovePending: networkid.TransactionID(clientMessageID),
+		DB:          pendingMessage,
+		Pending:     true,
+		StreamOrder: now.UnixMilli(),
 	}, nil
 }
 

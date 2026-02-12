@@ -365,9 +365,6 @@ func (c *TeamsClient) pollThread(ctx context.Context, th *teamsdb.ThreadState, n
 			maxTS = ts
 		}
 		ingested++
-		if isSelfEcho {
-			continue
-		}
 
 		eventMessageID := effectiveMessageID
 		if eventMessageID == "" {
@@ -390,6 +387,11 @@ func (c *TeamsClient) pollThread(ctx context.Context, th *teamsdb.ThreadState, n
 		c.Login.QueueRemoteEvent(evt)
 		c.queueReactionSyncForMessage(ctx, th, msg, eventMessageID)
 		ingested++
+		// Preserve send-intent echo reconciliation for message ID mapping while
+		// keeping unread state unchanged for self-sent events.
+		if isSelfEcho {
+			continue
+		}
 		if !es.IsFromMe && strings.TrimSpace(th.ThreadID) != "" {
 			c.markUnread(th.ThreadID)
 		}
