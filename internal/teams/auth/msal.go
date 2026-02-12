@@ -199,6 +199,11 @@ func findMSALKeys(storage map[string]string, clientID string) (string, error) {
 			return val, nil
 		}
 	}
+	for key, val := range storage {
+		if strings.HasPrefix(key, "msal.") && strings.Contains(key, ".token.keys.") {
+			return val, nil
+		}
+	}
 	return "", errors.New("msal token keys entry not found")
 }
 

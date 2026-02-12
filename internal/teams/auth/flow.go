@@ -1,10 +1,8 @@
 package auth
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -113,93 +111,34 @@ func (h *HelperListener) handleCapture(log *zerolog.Logger) http.HandlerFunc {
 }
 
 const helperPageHTML = `<!doctype html>
-<html lang="en">
+<html>
 <head>
 <meta charset="utf-8" />
 <title>Teams Login Helper</title>
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<style>
-body { font-family: sans-serif; margin: 24px; max-width: 720px; }
-label { display: block; font-weight: 600; margin-bottom: 8px; }
-textarea { width: 100%; height: 120px; }
-#status { margin-top: 12px; }
-</style>
 </head>
 <body>
-<h1>Teams Login Helper</h1>
-<p>After logging in, open https://teams.live.com/v2 and export localStorage in the browser console:</p>
-<pre><code>copy(JSON.stringify(Object.fromEntries(Object.entries(localStorage))))</code></pre>
-<p>If <code>copy</code> is unavailable, run the snippet and manually copy the output.</p>
-<label for="storage">Paste the localStorage JSON:</label>
-<textarea id="storage" placeholder="{&quot;msal.token.keys....&quot;: &quot;{...}&quot;, ...}"></textarea>
-<button id="submit">Submit</button>
-<div id="status"></div>
+<p>Completing login...</p>
 <script>
-const input = document.getElementById('storage');
-const submit = document.getElementById('submit');
-const status = document.getElementById('status');
-let submitted = false;
-
-function isValidStorage(value) {
+async function capture() {
   try {
-    const parsed = JSON.parse(value.trim());
-    return parsed && typeof parsed === 'object';
+    const storage = JSON.stringify(
+      Object.fromEntries(Object.entries(localStorage))
+    );
+
+    await fetch('/capture', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ storage })
+    });
+
+    document.body.innerHTML = "<p>Login complete. You may close this tab.</p>";
   } catch (err) {
-    return false;
+    document.body.innerHTML = "<p>Failed to capture tokens.</p>";
   }
 }
 
-function submitURL(value) {
-  if (submitted) return;
-  submitted = true;
-  fetch('/capture', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ storage: value })
-  }).then(() => {
-    status.textContent = 'Tokens captured. You can close this tab.';
-  }).catch(() => {
-    status.textContent = 'Failed to submit tokens.';
-    submitted = false;
-  });
-}
-
-input.addEventListener('input', () => {
-  if (!isValidStorage(input.value)) {
-    status.textContent = '';
-    return;
-  }
-  status.textContent = 'Submitting tokens...';
-  submitURL(input.value);
-});
-
-submit.addEventListener('click', () => {
-  const value = input.value.trim();
-  if (!value) {
-    status.textContent = 'Paste the localStorage JSON first.';
-    return;
-  }
-  status.textContent = 'Submitting tokens...';
-  submitURL(value);
-});
+capture();
 </script>
 </body>
 </html>
 `
-
-func WaitForManualState(ctx context.Context, reader io.Reader, writer io.Writer, clientID string) (*AuthState, error) {
-	_, _ = fmt.Fprintln(writer, "Paste the localStorage JSON and press Enter:")
-	inputCh := make(chan string, 1)
-	go func() {
-		r := bufio.NewReader(reader)
-		line, _ := r.ReadString('\n')
-		inputCh <- line
-	}()
-
-	select {
-	case input := <-inputCh:
-		return ExtractTokensFromMSALLocalStorage(input, clientID)
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-}
