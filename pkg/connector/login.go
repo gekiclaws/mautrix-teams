@@ -3,8 +3,8 @@ package connector
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -12,9 +12,6 @@ import (
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/database"
 	"maunium.net/go/mautrix/bridgev2/networkid"
-
-	"go.mau.fi/mautrix-teams/internal/teams/auth"
-	"go.mau.fi/mautrix-teams/pkg/teamsid"
 )
 
 const (
@@ -23,6 +20,9 @@ const (
 
 	LoginStepIDMSALLocalStorage    = "go.mau.teams.msal_localstorage"
 	LoginStepIDWebviewLocalStorage = "go.mau.teams.webview_localstorage"
+
+	teamsLoginSpecialStorage = "go.mau.teams.storage"
+	teamsLoginSpecialDebug   = "go.mau.teams.debug"
 )
 
 var loginFlowMSALLocalStorage = bridgev2.LoginFlow{
@@ -46,13 +46,7 @@ var _ bridgev2.LoginProcessUserInput = (*MSALLocalStorageLogin)(nil)
 
 func (l *MSALLocalStorageLogin) Start(ctx context.Context) (*bridgev2.LoginStep, error) {
 	_ = ctx
-	clientID := ""
-	if l != nil && l.Main != nil {
-		clientID = strings.TrimSpace(l.Main.Config.ClientID)
-	}
-	if clientID == "" {
-		clientID = auth.NewClient(nil).ClientID
-	}
+	clientID := resolveClientID(l.Main)
 	instructions := "1. Open https://teams.live.com/v2 in your browser and log in.\n" +
 		"2. Open browser devtools console.\n" +
 		"3. Run:\n" +
@@ -86,12 +80,8 @@ func (l *MSALLocalStorageLogin) SubmitUserInput(ctx context.Context, input map[s
 		return nil, bridgev2.RespError{ErrCode: "FI.MAU.TEAMS_MISSING_STORAGE", Err: "Missing localStorage payload", StatusCode: http.StatusBadRequest}
 	}
 
-	clientID := strings.TrimSpace(l.Main.Config.ClientID)
-	if clientID == "" {
-		clientID = auth.NewClient(nil).ClientID
-	}
-
-	meta, err := extractMetaFromStorage(ctx, raw, clientID)
+	clientID := resolveClientID(l.Main)
+	meta, err := ExtractTeamsLoginMetadataFromLocalStorage(ctx, raw, clientID)
 	if err != nil {
 		return nil, err
 	}
@@ -128,19 +118,10 @@ var _ bridgev2.LoginProcessCookies = (*WebviewLocalStorageLogin)(nil)
 
 func (l *WebviewLocalStorageLogin) Start(ctx context.Context) (*bridgev2.LoginStep, error) {
 	_ = ctx
-	clientID := ""
-	if l != nil && l.Main != nil {
-		clientID = strings.TrimSpace(l.Main.Config.ClientID)
-	}
-	if clientID == "" {
-		clientID = auth.NewClient(nil).ClientID
-	}
-	tokenKeysStorageKey := "msal.token.keys." + clientID
-	captureURLRegex := "^https://teams\\.live\\.com/__mautrix_capture$"
+	fullStorageKey := "__mautrix_teams_full_storage"
 	if l != nil && l.User != nil {
 		l.User.Log.Info().
-			Str("local_storage_key", tokenKeysStorageKey).
-			Str("capture_url_regex", captureURLRegex).
+			Str("local_storage_key", fullStorageKey).
 			Msg("Starting Teams webview login flow with auto localStorage extraction")
 		go func() {
 			ticker := time.NewTicker(15 * time.Second)
@@ -172,15 +153,14 @@ func (l *WebviewLocalStorageLogin) Start(ctx context.Context) (*bridgev2.LoginSt
 					Required: true,
 					Sources: []bridgev2.LoginCookieFieldSource{
 						{
-							// Primary path: capture synthetic JSON body emitted by ExtractJS beacon.
-							Type:            bridgev2.LoginCookieTypeRequestBody,
-							Name:            "storage",
-							RequestURLRegex: captureURLRegex,
+							// Primary path: direct ExtractJS output.
+							Type: bridgev2.LoginCookieTypeSpecial,
+							Name: teamsLoginSpecialStorage,
 						},
 						{
-							// Fallback path for clients that directly read localStorage by exact key.
+							// Fallback path: value persisted by ExtractJS.
 							Type: bridgev2.LoginCookieTypeLocalStorage,
-							Name: tokenKeysStorageKey,
+							Name: fullStorageKey,
 						},
 					},
 				},
@@ -189,9 +169,8 @@ func (l *WebviewLocalStorageLogin) Start(ctx context.Context) (*bridgev2.LoginSt
 					Required: false,
 					Sources: []bridgev2.LoginCookieFieldSource{
 						{
-							Type:            bridgev2.LoginCookieTypeRequestBody,
-							Name:            "debug",
-							RequestURLRegex: captureURLRegex,
+							Type: bridgev2.LoginCookieTypeSpecial,
+							Name: teamsLoginSpecialDebug,
 						},
 						{
 							Type: bridgev2.LoginCookieTypeLocalStorage,
@@ -230,6 +209,9 @@ func (l *WebviewLocalStorageLogin) Start(ctx context.Context) (*bridgev2.LoginSt
   function dump() {
     try { return JSON.stringify(Object.fromEntries(Object.entries(localStorage))); } catch (e) { return ""; }
   }
+  function trySet(key, value) {
+    try { localStorage.setItem(key, value); return true; } catch (e) { return false; }
+  }
   function findMSALKey() {
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
@@ -249,18 +231,11 @@ func (l *WebviewLocalStorageLogin) Start(ctx context.Context) (*bridgev2.LoginSt
       const storage = dump();
       addTrace("dump_len=" + storage.length);
       if (storage) {
-        try {
-          const payload = JSON.stringify({ storage, debug: traceValue() });
-          await fetch("https://teams.live.com/__mautrix_capture", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: payload
-          });
-          addTrace("capture_beacon=sent");
-        } catch (e) {
-          addTrace("capture_beacon=failed:" + String((e && e.message) || e));
-        }
-        return { storage, debug: traceValue() };
+        const debug = traceValue();
+        const storageSaved = trySet("__mautrix_teams_full_storage", storage);
+        const debugSaved = trySet("__mautrix_teams_debug", debug);
+        addTrace("stash_storage=" + (storageSaved ? "ok" : "fail") + " stash_debug=" + (debugSaved ? "ok" : "fail"));
+        return { storage, debug };
       }
       addTrace("dump_empty");
     }
@@ -288,7 +263,15 @@ func (l *WebviewLocalStorageLogin) SubmitCookies(ctx context.Context, cookies ma
 		return nil, errors.New("missing login state")
 	}
 	l.submitted.Store(true)
-	l.User.Log.Info().Int("cookie_fields", len(cookies)).Msg("Teams webview login submitted cookie payload")
+	cookieKeys := make([]string, 0, len(cookies))
+	for key := range cookies {
+		cookieKeys = append(cookieKeys, key)
+	}
+	sort.Strings(cookieKeys)
+	l.User.Log.Info().
+		Int("cookie_fields", len(cookies)).
+		Strs("cookie_keys", cookieKeys).
+		Msg("Teams webview login submitted cookie payload")
 	debugInfo := strings.TrimSpace(cookies["debug"])
 	if debugInfo != "" {
 		l.User.Log.Info().
@@ -299,11 +282,8 @@ func (l *WebviewLocalStorageLogin) SubmitCookies(ctx context.Context, cookies ma
 	if raw == "" {
 		return nil, bridgev2.RespError{ErrCode: "FI.MAU.TEAMS_MISSING_STORAGE", Err: "Missing localStorage payload", StatusCode: http.StatusBadRequest}
 	}
-	clientID := strings.TrimSpace(l.Main.Config.ClientID)
-	if clientID == "" {
-		clientID = auth.NewClient(nil).ClientID
-	}
-	meta, err := extractMetaFromStorage(ctx, raw, clientID)
+	clientID := resolveClientID(l.Main)
+	meta, err := ExtractTeamsLoginMetadataFromLocalStorage(ctx, raw, clientID)
 	if err != nil {
 		return nil, err
 	}
@@ -324,35 +304,6 @@ func (l *WebviewLocalStorageLogin) SubmitCookies(ctx context.Context, cookies ma
 			UserLoginID: ul.ID,
 			UserLogin:   ul,
 		},
-	}, nil
-}
-
-func extractMetaFromStorage(ctx context.Context, raw string, clientID string) (*teamsid.UserLoginMetadata, error) {
-	state, err := auth.ExtractTokensFromMSALLocalStorage(raw, clientID)
-	if err != nil {
-		return nil, bridgev2.RespError{ErrCode: "FI.MAU.TEAMS_INVALID_STORAGE", Err: fmt.Sprintf("Failed to extract tokens: %v", err), StatusCode: http.StatusBadRequest}
-	}
-	if strings.TrimSpace(state.AccessToken) == "" {
-		return nil, bridgev2.RespError{ErrCode: "FI.MAU.TEAMS_MISSING_ACCESS_TOKEN", Err: "Access token missing from extracted state", StatusCode: http.StatusBadRequest}
-	}
-
-	authClient := auth.NewClient(nil)
-	token, expiresAt, skypeID, err := authClient.AcquireSkypeToken(ctx, state.AccessToken)
-	if err != nil {
-		return nil, bridgev2.RespError{ErrCode: "FI.MAU.TEAMS_SKYPETOKEN_FAILED", Err: fmt.Sprintf("Failed to acquire skypetoken: %v", err), StatusCode: http.StatusBadRequest}
-	}
-
-	teamsUserID := auth.NormalizeTeamsUserID(skypeID)
-	if teamsUserID == "" {
-		return nil, bridgev2.RespError{ErrCode: "FI.MAU.TEAMS_MISSING_USER_ID", Err: "Teams user ID missing from skypetoken response", StatusCode: http.StatusBadRequest}
-	}
-
-	return &teamsid.UserLoginMetadata{
-		RefreshToken:         state.RefreshToken,
-		AccessTokenExpiresAt: state.ExpiresAtUnix,
-		SkypeToken:           token,
-		SkypeTokenExpiresAt:  expiresAt,
-		TeamsUserID:          teamsUserID,
 	}, nil
 }
 
