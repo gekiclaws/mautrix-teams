@@ -1,5 +1,12 @@
 package teamsid
 
+import (
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+)
+
 // Bridgev2 metadata types for mautrix-teams.
 //
 // These are stored in the bridgev2 database as JSON blobs and must remain
@@ -30,5 +37,33 @@ type UserLoginMetadata struct {
 
 	SkypeToken          string `json:"skype_token,omitempty"`
 	SkypeTokenExpiresAt int64  `json:"skype_token_expires_at,omitempty"`
+	GraphAccessToken    string `json:"graph_access_token,omitempty"`
+	GraphExpiresAt      int64  `json:"graph_expires_at,omitempty"`
 	TeamsUserID         string `json:"teams_user_id,omitempty"`
+}
+
+const graphTokenExpirySkew = 60 * time.Second
+
+var (
+	ErrGraphAccessTokenMissing = errors.New("missing graph access token")
+	ErrGraphAccessTokenExpired = errors.New("graph access token expired")
+)
+
+func (m *UserLoginMetadata) GraphTokenValid(now time.Time) bool {
+	if m == nil || strings.TrimSpace(m.GraphAccessToken) == "" || m.GraphExpiresAt == 0 {
+		return false
+	}
+	expiresAt := time.Unix(m.GraphExpiresAt, 0).UTC()
+	return now.UTC().Add(graphTokenExpirySkew).Before(expiresAt)
+}
+
+func (m *UserLoginMetadata) GetGraphAccessToken() (string, error) {
+	if m == nil || strings.TrimSpace(m.GraphAccessToken) == "" {
+		return "", ErrGraphAccessTokenMissing
+	}
+	if !m.GraphTokenValid(time.Now().UTC()) {
+		expiresAt := time.Unix(m.GraphExpiresAt, 0).UTC().Format(time.RFC3339)
+		return "", fmt.Errorf("%w (expires_at=%s)", ErrGraphAccessTokenExpired, expiresAt)
+	}
+	return strings.TrimSpace(m.GraphAccessToken), nil
 }

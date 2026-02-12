@@ -17,7 +17,12 @@ const (
 	defaultRedirectURI        = "https://teams.live.com/v2"
 )
 
-var defaultScopes = []string{"openid", "profile", "offline_access"}
+var defaultScopes = []string{
+	"openid",
+	"profile",
+	"offline_access",
+	"https://graph.microsoft.com/Files.ReadWrite",
+}
 
 type Client struct {
 	HTTP               *http.Client

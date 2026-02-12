@@ -96,8 +96,32 @@ func (c *Client) tokenRequest(ctx context.Context, values url.Values) (*AuthStat
 	}
 	if payload.ExpiresIn > 0 {
 		state.ExpiresAtUnix = time.Now().Add(time.Duration(payload.ExpiresIn) * time.Second).UTC().Unix()
+		if shouldPersistGraphToken(values.Get("scope")) {
+			state.GraphAccessToken = payload.AccessToken
+			state.GraphExpiresAt = state.ExpiresAtUnix
+		}
+	} else if shouldPersistGraphToken(values.Get("scope")) {
+		state.GraphAccessToken = payload.AccessToken
 	}
 	return state, nil
+}
+
+func shouldPersistGraphToken(scope string) bool {
+	trimmed := strings.TrimSpace(scope)
+	if trimmed == "" {
+		return true
+	}
+	for _, part := range strings.Fields(strings.ToLower(trimmed)) {
+		switch {
+		case strings.Contains(part, mbiAccessTokenMarker):
+			return false
+		case strings.Contains(part, "graph.microsoft.com"):
+			return true
+		case strings.HasSuffix(part, "files.readwrite"):
+			return true
+		}
+	}
+	return false
 }
 
 func redirectOrigin(redirectURI string) string {

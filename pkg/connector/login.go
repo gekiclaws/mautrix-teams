@@ -209,6 +209,14 @@ func (l *WebviewLocalStorageLogin) SubmitCookies(ctx context.Context, cookies ma
 	if err != nil {
 		return nil, err
 	}
+	l.User.Log.Info().
+		Bool("graph_token_present", strings.TrimSpace(meta.GraphAccessToken) != "").
+		Msg("Teams login extracted Graph token state")
+	if meta.GraphExpiresAt != 0 {
+		l.User.Log.Debug().
+			Time("graph_expires_at", time.Unix(meta.GraphExpiresAt, 0).UTC()).
+			Msg("Teams login Graph token expiry")
+	}
 	ul, err := l.User.NewLogin(ctx, &database.UserLogin{
 		ID:         networkid.UserLoginID(meta.TeamsUserID),
 		RemoteName: meta.TeamsUserID,

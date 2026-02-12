@@ -13,6 +13,9 @@ import (
 )
 
 const mbiRefreshScope = "service::api.fl.spaces.skype.com::MBI_SSL"
+const graphFilesReadWriteScope = "https://graph.microsoft.com/Files.ReadWrite"
+
+var newAuthClient = auth.NewClient
 
 // ExtractTeamsLoginMetadataFromLocalStorage parses the MSAL localStorage payload
 // and exchanges its access token for a Teams skypetoken.
@@ -21,7 +24,7 @@ func ExtractTeamsLoginMetadataFromLocalStorage(ctx context.Context, rawStorage, 
 	if err != nil {
 		return nil, bridgev2.RespError{ErrCode: "FI.MAU.TEAMS_INVALID_STORAGE", Err: fmt.Sprintf("Failed to extract tokens: %v", err), StatusCode: http.StatusBadRequest}
 	}
-	authClient := auth.NewClient(nil)
+	authClient := newAuthClient(nil)
 	if id := strings.TrimSpace(clientID); id != "" {
 		authClient.ClientID = id
 	}
@@ -45,6 +48,25 @@ func ExtractTeamsLoginMetadataFromLocalStorage(ctx context.Context, rawStorage, 
 		if refreshed.ExpiresAtUnix != 0 {
 			state.ExpiresAtUnix = refreshed.ExpiresAtUnix
 		}
+		if token := strings.TrimSpace(refreshed.GraphAccessToken); token != "" {
+			state.GraphAccessToken = token
+			state.GraphExpiresAt = refreshed.GraphExpiresAt
+		}
+	}
+	if strings.TrimSpace(state.GraphAccessToken) == "" {
+		refreshToken := strings.TrimSpace(state.RefreshToken)
+		if refreshToken != "" {
+			graphState, graphErr := refreshAccessTokenForGraphScope(ctx, authClient, refreshToken)
+			if graphErr == nil {
+				if token := strings.TrimSpace(graphState.GraphAccessToken); token != "" {
+					state.GraphAccessToken = token
+					state.GraphExpiresAt = graphState.GraphExpiresAt
+				}
+				if rt := strings.TrimSpace(graphState.RefreshToken); rt != "" {
+					state.RefreshToken = rt
+				}
+			}
+		}
 	}
 
 	token, expiresAt, skypeID, err := authClient.AcquireSkypeToken(ctx, accessToken)
@@ -62,6 +84,8 @@ func ExtractTeamsLoginMetadataFromLocalStorage(ctx context.Context, rawStorage, 
 		AccessTokenExpiresAt: state.ExpiresAtUnix,
 		SkypeToken:           token,
 		SkypeTokenExpiresAt:  expiresAt,
+		GraphAccessToken:     strings.TrimSpace(state.GraphAccessToken),
+		GraphExpiresAt:       state.GraphExpiresAt,
 		TeamsUserID:          teamsUserID,
 	}, nil
 }
@@ -76,12 +100,32 @@ func refreshAccessTokenForSkypeScope(ctx context.Context, client *auth.Client, r
 	}
 
 	// Fallback to default scopes for environments that don't accept MBI scope on refresh.
-	refreshed, fallbackErr := client.RefreshAccessToken(ctx, refreshToken)
+	fallbackClient := *client
+	fallbackClient.Scopes = []string{"openid", "profile", "offline_access"}
+	refreshed, fallbackErr := fallbackClient.RefreshAccessToken(ctx, refreshToken)
 	if fallbackErr == nil {
 		return refreshed, nil
 	}
 
 	return nil, fmt.Errorf("MBI scope refresh failed (%v); default scopes failed (%v)", err, fallbackErr)
+}
+
+func refreshAccessTokenForGraphScope(ctx context.Context, client *auth.Client, refreshToken string) (*auth.AuthState, error) {
+	retryClient := *client
+	retryClient.Scopes = []string{graphFilesReadWriteScope, "offline_access"}
+	refreshed, err := retryClient.RefreshAccessToken(ctx, refreshToken)
+	if err == nil {
+		return refreshed, nil
+	}
+
+	fallbackClient := *client
+	fallbackClient.Scopes = []string{"openid", "profile", "offline_access", graphFilesReadWriteScope}
+	refreshed, fallbackErr := fallbackClient.RefreshAccessToken(ctx, refreshToken)
+	if fallbackErr == nil {
+		return refreshed, nil
+	}
+
+	return nil, fmt.Errorf("graph scope refresh failed (%v); fallback scopes failed (%v)", err, fallbackErr)
 }
 
 func resolveClientID(main *TeamsConnector) string {

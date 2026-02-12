@@ -19,6 +19,8 @@ type AuthState struct {
 
 	SkypeToken          string `json:"skype_token,omitempty"`
 	SkypeTokenExpiresAt int64  `json:"skype_token_expires_at,omitempty"`
+	GraphAccessToken    string `json:"graph_access_token,omitempty"`
+	GraphExpiresAt      int64  `json:"graph_expires_at,omitempty"`
 	TeamsUserID         string `json:"teams_user_id,omitempty"`
 }
 
@@ -87,7 +89,7 @@ func (a *AuthState) hasAnyToken() bool {
 	if a == nil {
 		return false
 	}
-	return a.AccessToken != "" || a.RefreshToken != "" || a.IDToken != "" || a.SkypeToken != ""
+	return a.AccessToken != "" || a.RefreshToken != "" || a.IDToken != "" || a.SkypeToken != "" || a.GraphAccessToken != ""
 }
 
 func NormalizeTeamsUserID(value string) string {
