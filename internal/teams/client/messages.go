@@ -81,7 +81,16 @@ func (c *Client) ListMessages(ctx context.Context, conversationID string, sinceS
 	}
 
 	result := make([]model.RemoteMessage, 0, len(payload.Messages))
+	seen := make(map[string]struct{}, len(payload.Messages))
 	for _, msg := range payload.Messages {
+		msgID := strings.TrimSpace(msg.ID)
+		if msgID != "" {
+			if _, ok := seen[msgID]; ok {
+				continue
+			}
+			seen[msgID] = struct{}{}
+		}
+
 		sequenceID, err := normalizeSequenceID(msg.SequenceID)
 		if err != nil {
 			return nil, err

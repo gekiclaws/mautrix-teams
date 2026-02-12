@@ -4,6 +4,7 @@ package connector
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"strings"
 	"time"
@@ -22,7 +23,8 @@ import (
 )
 
 const (
-	threadDiscoveryInterval = 10 * time.Minute
+	threadDiscoveryInterval = 30 * time.Second
+	selfMessageTTL          = 5 * time.Minute
 )
 
 func (c *TeamsClient) startSyncLoop() {
@@ -72,28 +74,13 @@ func (c *TeamsClient) stopSyncLoop(timeout time.Duration) {
 func (c *TeamsClient) syncLoop(ctx context.Context) {
 	log := zerolog.Ctx(ctx)
 	// Run once immediately to seed portals.
-	if err := c.syncOnce(ctx); err != nil {
+	err := c.syncOnce(ctx)
+	if err != nil {
 		log.Err(err).Msg("Teams sync loop initial run failed")
 	}
 
-	// Keep refreshing thread list in the background.
-	go func() {
-		ticker := time.NewTicker(threadDiscoveryInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				if err := c.refreshThreads(ctx); err != nil {
-					log.Err(err).Msg("Teams thread discovery refresh failed")
-				}
-			}
-		}
-	}()
-
 	// Poll threads continuously with per-thread scheduling until canceled.
-	if err := c.pollDueThreads(ctx); err != nil && !errors.Is(err, context.Canceled) {
+	if err := c.pollDueThreads(ctx, err == nil); err != nil && !errors.Is(err, context.Canceled) {
 		log.Err(err).Msg("Teams polling loop exited")
 	}
 }
@@ -233,10 +220,11 @@ func (c *TeamsClient) pollAllThreadsOnce(ctx context.Context) error {
 	return nil
 }
 
-func (c *TeamsClient) pollDueThreads(ctx context.Context) error {
+func (c *TeamsClient) pollDueThreads(ctx context.Context, initialDiscoverySucceeded bool) error {
 	if c == nil || c.Main == nil || c.Main.DB == nil || c.Login == nil {
 		return nil
 	}
+	log := zerolog.Ctx(ctx)
 	threads, err := c.Main.DB.ThreadState.ListForLogin(ctx, c.Login.ID)
 	if err != nil {
 		return err
@@ -250,11 +238,21 @@ func (c *TeamsClient) pollDueThreads(ctx context.Context) error {
 		states[th.ThreadID] = &pollState{backoff: PollBackoff{Delay: pollBaseDelay}, nextPoll: time.Now().UTC()}
 	}
 
+	nextDiscovery := time.Now().UTC().Add(threadDiscoveryInterval)
+	if !initialDiscoverySucceeded {
+		nextDiscovery = time.Time{}
+	}
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		now := time.Now().UTC()
+		if nextDiscovery.IsZero() || !now.Before(nextDiscovery) {
+			if err := c.refreshThreads(ctx); err != nil {
+				log.Err(err).Msg("Teams thread discovery refresh failed")
+			}
+			nextDiscovery = now.Add(threadDiscoveryInterval)
+		}
 		nextWake := now.Add(5 * time.Second)
 
 		threads, err := c.Main.DB.ThreadState.ListForLogin(ctx, c.Login.ID)
@@ -321,19 +319,24 @@ func (c *TeamsClient) pollThread(ctx context.Context, th *teamsdb.ThreadState, n
 	var maxSeq string
 	var maxTS int64
 	ingested := 0
+	selfID := ""
+	if c.Meta != nil {
+		selfID = model.NormalizeTeamsUserID(c.Meta.TeamsUserID)
+	}
 
 	for _, msg := range msgs {
 		if strings.TrimSpace(msg.MessageID) == "" {
 			continue
 		}
+		senderID := model.NormalizeTeamsUserID(msg.SenderID)
+		effectiveMessageID := c.effectiveRemoteMessageID(msg)
 		// Filter already-seen messages in case the remote API returns history.
 		if lastSeq != "" && model.CompareSequenceID(strings.TrimSpace(msg.SequenceID), lastSeq) <= 0 {
 			// Still process reactions on older messages for sync parity.
-			c.queueReactionSyncForMessage(ctx, th, msg, "")
+			c.queueReactionSyncForMessage(ctx, th, msg, effectiveMessageID)
 			continue
 		}
 
-		senderID := model.NormalizeTeamsUserID(msg.SenderID)
 		displayName := strings.TrimSpace(msg.IMDisplayName)
 		if displayName == "" {
 			displayName = strings.TrimSpace(msg.TokenDisplayName)
@@ -344,23 +347,24 @@ func (c *TeamsClient) pollThread(ctx context.Context, th *teamsdb.ThreadState, n
 		_ = c.Main.DB.Profile.Upsert(ctx, senderID, displayName, now)
 		msg.SenderName = displayName
 
-		effectiveMessageID := NormalizeTeamsReactionMessageID(msg.MessageID)
-		if effectiveMessageID == "" {
-			effectiveMessageID = NormalizeTeamsReactionMessageID(msg.SequenceID)
-		}
-
 		es := bridgev2.EventSender{Sender: teamsUserIDToNetworkUserID(senderID)}
-		if senderID != "" && strings.TrimSpace(c.Meta.TeamsUserID) != "" && senderID == c.Meta.TeamsUserID {
+		if senderID != "" && selfID != "" && senderID == selfID {
 			es.IsFromMe = true
 			es.SenderLogin = c.Login.ID
-			if strings.TrimSpace(msg.ClientMessageID) != "" {
-				effectiveMessageID = NormalizeTeamsReactionMessageID(msg.ClientMessageID)
-			}
 		}
 		if effectiveMessageID != "" && len(msg.Reactions) > 0 {
 			c.markReactionSeen(effectiveMessageID, true)
 		}
-		c.queueReactionSyncForMessage(ctx, th, msg, effectiveMessageID)
+
+		clientMessageID := strings.TrimSpace(msg.ClientMessageID)
+		isSelfEcho := senderID != "" && selfID != "" && senderID == selfID && c.consumeSelfMessage(clientMessageID)
+		if maxSeq == "" || model.CompareSequenceID(strings.TrimSpace(msg.SequenceID), maxSeq) > 0 {
+			maxSeq = strings.TrimSpace(msg.SequenceID)
+		}
+		if ts := msg.Timestamp.UnixMilli(); ts > maxTS {
+			maxTS = ts
+		}
+		ingested++
 
 		eventMessageID := effectiveMessageID
 		if eventMessageID == "" {
@@ -377,20 +381,19 @@ func (c *TeamsClient) pollThread(ctx context.Context, th *teamsdb.ThreadState, n
 			},
 			Data:               msg,
 			ID:                 networkid.MessageID(eventMessageID),
-			TransactionID:      networkid.TransactionID(strings.TrimSpace(msg.ClientMessageID)),
+			TransactionID:      networkid.TransactionID(clientMessageID),
 			ConvertMessageFunc: convertTeamsMessage,
 		}
 		c.Login.QueueRemoteEvent(evt)
+		c.queueReactionSyncForMessage(ctx, th, msg, eventMessageID)
 		ingested++
+		// Preserve send-intent echo reconciliation for message ID mapping while
+		// keeping unread state unchanged for self-sent events.
+		if isSelfEcho {
+			continue
+		}
 		if !es.IsFromMe && strings.TrimSpace(th.ThreadID) != "" {
 			c.markUnread(th.ThreadID)
-		}
-
-		if maxSeq == "" || model.CompareSequenceID(strings.TrimSpace(msg.SequenceID), maxSeq) > 0 {
-			maxSeq = strings.TrimSpace(msg.SequenceID)
-		}
-		if ts := msg.Timestamp.UnixMilli(); ts > maxTS {
-			maxTS = ts
 		}
 	}
 
@@ -404,6 +407,13 @@ func (c *TeamsClient) pollThread(ctx context.Context, th *teamsdb.ThreadState, n
 }
 
 const receiptPollInterval = 30 * time.Second
+const getLastMessagePartBySenderAtOrBeforeTimeQuery = `
+	SELECT id
+	FROM message
+	WHERE bridge_id=$1 AND room_id=$2 AND room_receiver=$3 AND sender_id=$4 AND timestamp<=$5
+	ORDER BY timestamp DESC, part_id DESC
+	LIMIT 1
+`
 
 func (c *TeamsClient) pollConsumptionHorizons(ctx context.Context, th *teamsdb.ThreadState, now time.Time) error {
 	if c == nil || c.Main == nil || c.Main.DB == nil || c.Login == nil || th == nil {
@@ -413,6 +423,7 @@ func (c *TeamsClient) pollConsumptionHorizons(ctx context.Context, th *teamsdb.T
 	if threadID == "" {
 		return nil
 	}
+	log := zerolog.Ctx(ctx).With().Str("thread_id", threadID).Logger()
 	if !c.shouldPollReceipts(threadID, now) {
 		return nil
 	}
@@ -464,10 +475,14 @@ func (c *TeamsClient) pollConsumptionHorizons(ctx context.Context, th *teamsdb.T
 	if state != nil && latestReadTS <= state.LastReadTS {
 		return nil
 	}
+	log.Debug().
+		Str("remote_user_id", remoteID).
+		Int64("latest_read_ts", latestReadTS).
+		Msg("consumption horizon advanced")
 
 	readUpTo := time.UnixMilli(latestReadTS).UTC()
 	portalKey := c.portalKey(threadID)
-	target, err := c.Main.Bridge.DB.Message.GetLastPartAtOrBeforeTime(ctx, portalKey, readUpTo)
+	targetID, err := c.getLastSentMessagePartAtOrBeforeTime(ctx, portalKey, teamsUserIDToNetworkUserID(selfID), readUpTo)
 	if err != nil {
 		return err
 	}
@@ -483,13 +498,38 @@ func (c *TeamsClient) pollConsumptionHorizons(ctx context.Context, th *teamsdb.T
 		},
 		ReadUpTo: readUpTo,
 	}
-	if target != nil && target.ID != "" {
-		receipt.LastTarget = target.ID
-		receipt.Targets = []networkid.MessageID{target.ID}
+	if targetID != "" {
+		receipt.LastTarget = targetID
+		receipt.Targets = []networkid.MessageID{targetID}
 	}
 	c.Login.QueueRemoteEvent(receipt)
 
 	return c.Main.DB.ConsumptionHorizon.UpsertLastRead(ctx, c.Login.ID, threadID, remoteID, latestReadTS)
+}
+
+func (c *TeamsClient) getLastSentMessagePartAtOrBeforeTime(ctx context.Context, portal networkid.PortalKey, senderID networkid.UserID, maxTS time.Time) (networkid.MessageID, error) {
+	if c == nil || c.Main == nil || c.Main.Bridge == nil || c.Main.Bridge.DB == nil {
+		return "", nil
+	}
+	if senderID == "" {
+		return "", nil
+	}
+	var msgID networkid.MessageID
+	err := c.Main.Bridge.DB.QueryRow(
+		ctx,
+		getLastMessagePartBySenderAtOrBeforeTimeQuery,
+		c.Main.Bridge.DB.BridgeID,
+		portal.ID,
+		portal.Receiver,
+		senderID,
+		maxTS.UnixNano(),
+	).Scan(&msgID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	} else if err != nil {
+		return "", err
+	}
+	return msgID, nil
 }
 
 func (c *TeamsClient) shouldPollReceipts(threadID string, now time.Time) bool {
@@ -512,14 +552,12 @@ func (c *TeamsClient) queueReactionSyncForMessage(ctx context.Context, th *teams
 	}
 	messageID = strings.TrimSpace(messageID)
 	if messageID == "" {
-		messageID = NormalizeTeamsReactionMessageID(msg.MessageID)
-	}
-	if messageID == "" {
-		messageID = NormalizeTeamsReactionMessageID(msg.SequenceID)
+		messageID = c.effectiveRemoteMessageID(msg)
 	}
 	if messageID == "" {
 		return
 	}
+	messageID = c.resolveReactionSyncTargetMessageID(ctx, th.ThreadID, messageID, msg)
 
 	data, hasReactions := c.buildReactionSyncData(msg.Reactions)
 	if !hasReactions && !c.shouldSendEmptyReactionSync(ctx, th.ThreadID, messageID) {
@@ -628,4 +666,66 @@ func (c *TeamsClient) markReactionSeen(messageID string, seen bool) bool {
 		delete(c.reactionSeen, messageID)
 	}
 	return exists
+}
+
+func (c *TeamsClient) effectiveRemoteMessageID(msg model.RemoteMessage) string {
+	effectiveMessageID := NormalizeTeamsReactionMessageID(msg.MessageID)
+	if effectiveMessageID == "" {
+		effectiveMessageID = NormalizeTeamsReactionMessageID(msg.SequenceID)
+	}
+	return effectiveMessageID
+}
+
+func (c *TeamsClient) resolveReactionSyncTargetMessageID(ctx context.Context, threadID string, messageID string, msg model.RemoteMessage) string {
+	candidates := buildReactionTargetMessageIDCandidates(messageID, msg)
+	if len(candidates) == 0 {
+		return ""
+	}
+	if c == nil || c.Main == nil || c.Main.Bridge == nil || c.Main.Bridge.DB == nil || c.Main.Bridge.DB.Message == nil {
+		return candidates[0]
+	}
+	receiver := c.portalKey(threadID).Receiver
+	for _, candidate := range candidates {
+		target, err := c.Main.Bridge.DB.Message.GetLastPartByID(ctx, receiver, networkid.MessageID(candidate))
+		if err == nil && target != nil {
+			return candidate
+		}
+	}
+	return candidates[0]
+}
+
+func buildReactionTargetMessageIDCandidates(messageID string, msg model.RemoteMessage) []string {
+	candidates := make([]string, 0, 8)
+	addCandidate := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		for _, existing := range candidates {
+			if existing == value {
+				return
+			}
+		}
+		candidates = append(candidates, value)
+	}
+	addCanonicalAndLegacy := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		normalized := NormalizeTeamsReactionMessageID(value)
+		addCandidate(normalized)
+		if normalized != "" {
+			addCandidate("msg/" + normalized)
+		}
+	}
+
+	// Prefer the selected ID first.
+	addCanonicalAndLegacy(messageID)
+	// Also try raw IDs from the payload, including clientmessageid for local echo targets.
+	addCanonicalAndLegacy(msg.MessageID)
+	addCanonicalAndLegacy(msg.SequenceID)
+	addCanonicalAndLegacy(msg.ClientMessageID)
+
+	return candidates
 }

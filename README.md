@@ -2,6 +2,7 @@
 A Matrix-Teams puppeting bridge.
 
 ## How to setup bridge
+From repo root:
 1. Run `bbctl --env prod config sh-msteams`
 2. Select `bridgev2` for bridge type
 3. Copy the generated config into `config.yaml`

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/database"
@@ -24,8 +26,8 @@ const (
 )
 
 var loginFlowMSALLocalStorage = bridgev2.LoginFlow{
-	Name:        "teams.live.com (browser)",
-	Description: "Login using Teams web app tokens from browser localStorage.",
+	Name:        "teams.live.com (manual copy/paste)",
+	Description: "Login by copying browser localStorage JSON from Teams and pasting it.",
 	ID:          FlowIDMSALLocalStorage,
 }
 
@@ -45,7 +47,7 @@ var _ bridgev2.LoginProcessUserInput = (*MSALLocalStorageLogin)(nil)
 func (l *MSALLocalStorageLogin) Start(ctx context.Context) (*bridgev2.LoginStep, error) {
 	_ = ctx
 	clientID := ""
-	if l.Main != nil {
+	if l != nil && l.Main != nil {
 		clientID = strings.TrimSpace(l.Main.Config.ClientID)
 	}
 	if clientID == "" {
@@ -102,6 +104,7 @@ func (l *MSALLocalStorageLogin) SubmitUserInput(ctx context.Context, input map[s
 	if err != nil {
 		return nil, err
 	}
+	startLoginConnect(ul, loginConnectBaseCtx(l.Main))
 
 	return &bridgev2.LoginStep{
 		Type:         bridgev2.LoginStepTypeComplete,
@@ -115,60 +118,182 @@ func (l *MSALLocalStorageLogin) SubmitUserInput(ctx context.Context, input map[s
 }
 
 type WebviewLocalStorageLogin struct {
-	Main *TeamsConnector
-	User *bridgev2.User
+	Main      *TeamsConnector
+	User      *bridgev2.User
+	submitted atomic.Bool
+	canceled  atomic.Bool
 }
 
 var _ bridgev2.LoginProcessCookies = (*WebviewLocalStorageLogin)(nil)
 
 func (l *WebviewLocalStorageLogin) Start(ctx context.Context) (*bridgev2.LoginStep, error) {
 	_ = ctx
-	instructions := "Log in to Teams in the embedded browser. The bridge will automatically extract localStorage when available."
+	clientID := ""
+	if l != nil && l.Main != nil {
+		clientID = strings.TrimSpace(l.Main.Config.ClientID)
+	}
+	if clientID == "" {
+		clientID = auth.NewClient(nil).ClientID
+	}
+	tokenKeysStorageKey := "msal.token.keys." + clientID
+	captureURLRegex := "^https://teams\\.live\\.com/__mautrix_capture$"
+	if l != nil && l.User != nil {
+		l.User.Log.Info().
+			Str("local_storage_key", tokenKeysStorageKey).
+			Str("capture_url_regex", captureURLRegex).
+			Msg("Starting Teams webview login flow with auto localStorage extraction")
+		go func() {
+			ticker := time.NewTicker(15 * time.Second)
+			defer ticker.Stop()
+			for i := 1; i <= 8; i++ { // up to ~2 minutes
+				<-ticker.C
+				if l.submitted.Load() || l.canceled.Load() {
+					return
+				}
+				l.User.Log.Warn().
+					Int("elapsed_seconds", i*15).
+					Msg("Teams webview login still waiting for cookie submission")
+			}
+			if !l.submitted.Load() && !l.canceled.Load() {
+				l.User.Log.Warn().Msg("Teams webview login has not submitted cookies after 2 minutes; extraction may be stalled")
+			}
+		}()
+	}
+	instructions := "Log in to Teams in the embedded browser. The bridge will automatically extract localStorage, close the window, and return you to Beeper."
 	return &bridgev2.LoginStep{
 		Type:         bridgev2.LoginStepTypeCookies,
 		StepID:       LoginStepIDWebviewLocalStorage,
 		Instructions: instructions,
 		CookiesParams: &bridgev2.LoginCookiesParams{
 			URL: "https://teams.live.com/v2",
-			Fields: []bridgev2.LoginCookieField{{
-				ID:       "storage",
-				Required: true,
-				Sources: []bridgev2.LoginCookieFieldSource{{
-					Type: bridgev2.LoginCookieTypeLocalStorage,
-					// The client will fill this field using ExtractJS instead of this name.
-					Name: "msal.token.keys.*",
-				}},
-			}},
-			WaitForURLPattern: "^https://teams\\.live\\.com/v2(?:/.*)?$",
+			Fields: []bridgev2.LoginCookieField{
+				{
+					ID:       "storage",
+					Required: true,
+					Sources: []bridgev2.LoginCookieFieldSource{
+						{
+							// Primary path: capture synthetic JSON body emitted by ExtractJS beacon.
+							Type:            bridgev2.LoginCookieTypeRequestBody,
+							Name:            "storage",
+							RequestURLRegex: captureURLRegex,
+						},
+						{
+							// Fallback path for clients that directly read localStorage by exact key.
+							Type: bridgev2.LoginCookieTypeLocalStorage,
+							Name: tokenKeysStorageKey,
+						},
+					},
+				},
+				{
+					ID:       "debug",
+					Required: false,
+					Sources: []bridgev2.LoginCookieFieldSource{
+						{
+							Type:            bridgev2.LoginCookieTypeRequestBody,
+							Name:            "debug",
+							RequestURLRegex: captureURLRegex,
+						},
+						{
+							Type: bridgev2.LoginCookieTypeLocalStorage,
+							Name: "__mautrix_teams_debug",
+						},
+					},
+				},
+			},
+			WaitForURLPattern: ".*",
 			ExtractJS: `(async () => {
+  const trace = [];
+  const addTrace = (msg) => {
+    if (trace.length < 80) {
+      trace.push(msg);
+    }
+  };
+  const traceValue = () => trace.join(" | ");
+  addTrace("start url=" + location.href);
+
+  // Force fallback auth path before passkey/WebAuthn prompts.
+  try {
+    Object.defineProperty(Navigator.prototype, "credentials", {
+      get() {
+        return {
+          get: async () => {
+            throw new DOMException("User cancelled", "NotAllowedError");
+          }
+        };
+      }
+    });
+    addTrace("webauthn_override=ok");
+  } catch (e) {
+    addTrace("webauthn_override=failed:" + String((e && e.message) || e));
+  }
+
   function dump() {
     try { return JSON.stringify(Object.fromEntries(Object.entries(localStorage))); } catch (e) { return ""; }
   }
-  function hasMSALKeys() {
+  function findMSALKey() {
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
-      if (k && k.startsWith("msal.token.keys.")) return true;
+      if (!k) continue;
+      if (k.startsWith("msal.token.keys.")) return k;
+      if (k.startsWith("msal.") && k.includes(".token.keys.")) return k;
     }
-    return false;
+    return "";
   }
-  for (let i = 0; i < 240; i++) { // ~2 minutes
-    if (hasMSALKeys()) {
+  for (let i = 0; i < 1200; i++) { // ~2 minutes
+    if (i % 50 === 0) {
+      addTrace("poll i=" + i + " ls_len=" + localStorage.length + " url=" + location.href);
+    }
+    const key = findMSALKey();
+    if (key) {
+      addTrace("msal_key_found=" + key);
       const storage = dump();
-      if (storage) return { storage };
+      addTrace("dump_len=" + storage.length);
+      if (storage) {
+        try {
+          const payload = JSON.stringify({ storage, debug: traceValue() });
+          await fetch("https://teams.live.com/__mautrix_capture", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: payload
+          });
+          addTrace("capture_beacon=sent");
+        } catch (e) {
+          addTrace("capture_beacon=failed:" + String((e && e.message) || e));
+        }
+        return { storage, debug: traceValue() };
+      }
+      addTrace("dump_empty");
     }
-    await new Promise(r => setTimeout(r, 500));
+    await new Promise(r => setTimeout(r, 100));
   }
-  throw new Error("Timed out waiting for MSAL tokens in localStorage");
+  const finalDump = dump();
+  addTrace("timeout final_dump_len=" + finalDump.length + " url=" + location.href);
+  return { storage: finalDump || "{}", debug: traceValue() };
 })()`,
 		},
 	}, nil
 }
 
-func (l *WebviewLocalStorageLogin) Cancel() {}
+func (l *WebviewLocalStorageLogin) Cancel() {
+	if l != nil {
+		l.canceled.Store(true)
+		if l.User != nil {
+			l.User.Log.Warn().Msg("Teams webview login was canceled before cookie submission")
+		}
+	}
+}
 
 func (l *WebviewLocalStorageLogin) SubmitCookies(ctx context.Context, cookies map[string]string) (*bridgev2.LoginStep, error) {
 	if l == nil || l.Main == nil || l.User == nil {
 		return nil, errors.New("missing login state")
+	}
+	l.submitted.Store(true)
+	l.User.Log.Info().Int("cookie_fields", len(cookies)).Msg("Teams webview login submitted cookie payload")
+	debugInfo := strings.TrimSpace(cookies["debug"])
+	if debugInfo != "" {
+		l.User.Log.Info().
+			Str("teams_login_cookie_debug", truncateForLog(debugInfo, 4000)).
+			Msg("Teams login extraction breadcrumbs")
 	}
 	raw := strings.TrimSpace(cookies["storage"])
 	if raw == "" {
@@ -190,6 +315,7 @@ func (l *WebviewLocalStorageLogin) SubmitCookies(ctx context.Context, cookies ma
 	if err != nil {
 		return nil, err
 	}
+	startLoginConnect(ul, loginConnectBaseCtx(l.Main))
 	return &bridgev2.LoginStep{
 		Type:         bridgev2.LoginStepTypeComplete,
 		StepID:       "go.mau.teams.complete",
@@ -228,4 +354,30 @@ func extractMetaFromStorage(ctx context.Context, raw string, clientID string) (*
 		SkypeTokenExpiresAt:  expiresAt,
 		TeamsUserID:          teamsUserID,
 	}, nil
+}
+
+func loginConnectBaseCtx(main *TeamsConnector) context.Context {
+	if main != nil && main.Bridge != nil && main.Bridge.BackgroundCtx != nil {
+		return main.Bridge.BackgroundCtx
+	}
+	return context.Background()
+}
+
+func startLoginConnect(login *bridgev2.UserLogin, baseCtx context.Context) {
+	if login == nil || login.Client == nil {
+		return
+	}
+	ctx := baseCtx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx = login.Log.WithContext(ctx)
+	go login.Client.Connect(ctx)
+}
+
+func truncateForLog(value string, maxLen int) string {
+	if maxLen <= 0 || len(value) <= maxLen {
+		return value
+	}
+	return value[:maxLen] + "...(truncated)"
 }

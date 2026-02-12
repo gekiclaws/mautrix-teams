@@ -1,6 +1,7 @@
 package model
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 )
@@ -31,5 +32,20 @@ func TestChooseLastSeenTS(t *testing.T) {
 	zero := time.Time{}
 	if got := ChooseLastSeenTS(zero, now); !got.Equal(now) {
 		t.Fatalf("expected fallback timestamp, got %s", got.Format(time.RFC3339Nano))
+	}
+}
+
+func TestExtractSenderID(t *testing.T) {
+	cases := map[string]string{
+		`"8:live:user"`: "8:live:user",
+		`"https://msgapi.teams.live.com/v1/users/ME/contacts/8:live:user"`: "8:live:user",
+		`{"id":"8:live:user"}`: "8:live:user",
+		`{"id":"https://msgapi.teams.live.com/v1/users/ME/contacts/8:live:user"}`: "8:live:user",
+		`""`: "",
+	}
+	for raw, expected := range cases {
+		if got := ExtractSenderID(json.RawMessage(raw)); got != expected {
+			t.Fatalf("ExtractSenderID(%s) = %q, want %q", raw, got, expected)
+		}
 	}
 }

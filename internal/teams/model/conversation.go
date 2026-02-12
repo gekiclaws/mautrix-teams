@@ -44,6 +44,8 @@ type RemoteConversation struct {
 	Consumers        []ConversationMember   `json:"consumers"`
 }
 
+const defaultRoomName = "Chat"
+
 type Thread struct {
 	ID             string
 	ConversationID string
@@ -82,12 +84,12 @@ func (c RemoteConversation) resolveRoomName(isOneToOne bool, selfUserID string) 
 		if dmName := c.resolveDMName(selfUserID); dmName != "" {
 			return dmName
 		}
-		return "Chat"
+		return ""
 	}
 	if name := c.resolveThreadName(); name != "" {
 		return name
 	}
-	return "Chat"
+	return defaultRoomName
 }
 
 func (c RemoteConversation) resolveDMName(selfUserID string) string {

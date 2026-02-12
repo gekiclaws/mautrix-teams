@@ -239,6 +239,7 @@ func TestListMessagesFromVariants(t *testing.T) {
 		_, _ = w.Write([]byte(`{"messages":[` +
 			`{"id":"m1","sequenceId":"1","from":"https://msgapi.teams.live.com/v1/users/ME/contacts/8:live:mattckwong","content":{"text":"hello"}},` +
 			`{"id":"m2","sequenceId":"2","from":{"id":"8:live:mattckwong","displayName":"Matt"},"content":{"text":"hi"}},` +
+			`{"id":"m2","sequenceId":"2","from":{"id":"https://msgapi.teams.live.com/v1/users/ME/contacts/8:live:mattckwong","displayName":"Matt"},"content":{"text":"hi"}},` +
 			`{"id":"m3","sequenceId":"3","from":""},` +
 			`{"id":"m4","sequenceId":"4","from":123}` +
 			`]}`))
