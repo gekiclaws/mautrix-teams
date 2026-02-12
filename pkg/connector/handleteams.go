@@ -328,14 +328,15 @@ func (c *TeamsClient) pollThread(ctx context.Context, th *teamsdb.ThreadState, n
 		if strings.TrimSpace(msg.MessageID) == "" {
 			continue
 		}
+		senderID := model.NormalizeTeamsUserID(msg.SenderID)
+		effectiveMessageID := c.effectiveRemoteMessageID(msg)
 		// Filter already-seen messages in case the remote API returns history.
 		if lastSeq != "" && model.CompareSequenceID(strings.TrimSpace(msg.SequenceID), lastSeq) <= 0 {
 			// Still process reactions on older messages for sync parity.
-			c.queueReactionSyncForMessage(ctx, th, msg, "")
+			c.queueReactionSyncForMessage(ctx, th, msg, effectiveMessageID)
 			continue
 		}
 
-		senderID := model.NormalizeTeamsUserID(msg.SenderID)
 		displayName := strings.TrimSpace(msg.IMDisplayName)
 		if displayName == "" {
 			displayName = strings.TrimSpace(msg.TokenDisplayName)
@@ -346,23 +347,14 @@ func (c *TeamsClient) pollThread(ctx context.Context, th *teamsdb.ThreadState, n
 		_ = c.Main.DB.Profile.Upsert(ctx, senderID, displayName, now)
 		msg.SenderName = displayName
 
-		effectiveMessageID := NormalizeTeamsReactionMessageID(msg.MessageID)
-		if effectiveMessageID == "" {
-			effectiveMessageID = NormalizeTeamsReactionMessageID(msg.SequenceID)
-		}
-
 		es := bridgev2.EventSender{Sender: teamsUserIDToNetworkUserID(senderID)}
 		if senderID != "" && selfID != "" && senderID == selfID {
 			es.IsFromMe = true
 			es.SenderLogin = c.Login.ID
-			if strings.TrimSpace(msg.ClientMessageID) != "" {
-				effectiveMessageID = NormalizeTeamsReactionMessageID(msg.ClientMessageID)
-			}
 		}
 		if effectiveMessageID != "" && len(msg.Reactions) > 0 {
 			c.markReactionSeen(effectiveMessageID, true)
 		}
-		c.queueReactionSyncForMessage(ctx, th, msg, effectiveMessageID)
 
 		clientMessageID := strings.TrimSpace(msg.ClientMessageID)
 		isSelfEcho := senderID != "" && selfID != "" && senderID == selfID && c.consumeSelfMessage(clientMessageID)
@@ -396,6 +388,8 @@ func (c *TeamsClient) pollThread(ctx context.Context, th *teamsdb.ThreadState, n
 			ConvertMessageFunc: convertTeamsMessage,
 		}
 		c.Login.QueueRemoteEvent(evt)
+		c.queueReactionSyncForMessage(ctx, th, msg, eventMessageID)
+		ingested++
 		if !es.IsFromMe && strings.TrimSpace(th.ThreadID) != "" {
 			c.markUnread(th.ThreadID)
 		}
@@ -556,14 +550,12 @@ func (c *TeamsClient) queueReactionSyncForMessage(ctx context.Context, th *teams
 	}
 	messageID = strings.TrimSpace(messageID)
 	if messageID == "" {
-		messageID = NormalizeTeamsReactionMessageID(msg.MessageID)
-	}
-	if messageID == "" {
-		messageID = NormalizeTeamsReactionMessageID(msg.SequenceID)
+		messageID = c.effectiveRemoteMessageID(msg)
 	}
 	if messageID == "" {
 		return
 	}
+	messageID = c.resolveReactionSyncTargetMessageID(ctx, th.ThreadID, messageID, msg)
 
 	data, hasReactions := c.buildReactionSyncData(msg.Reactions)
 	if !hasReactions && !c.shouldSendEmptyReactionSync(ctx, th.ThreadID, messageID) {
@@ -672,4 +664,66 @@ func (c *TeamsClient) markReactionSeen(messageID string, seen bool) bool {
 		delete(c.reactionSeen, messageID)
 	}
 	return exists
+}
+
+func (c *TeamsClient) effectiveRemoteMessageID(msg model.RemoteMessage) string {
+	effectiveMessageID := NormalizeTeamsReactionMessageID(msg.MessageID)
+	if effectiveMessageID == "" {
+		effectiveMessageID = NormalizeTeamsReactionMessageID(msg.SequenceID)
+	}
+	return effectiveMessageID
+}
+
+func (c *TeamsClient) resolveReactionSyncTargetMessageID(ctx context.Context, threadID string, messageID string, msg model.RemoteMessage) string {
+	candidates := buildReactionTargetMessageIDCandidates(messageID, msg)
+	if len(candidates) == 0 {
+		return ""
+	}
+	if c == nil || c.Main == nil || c.Main.Bridge == nil || c.Main.Bridge.DB == nil || c.Main.Bridge.DB.Message == nil {
+		return candidates[0]
+	}
+	receiver := c.portalKey(threadID).Receiver
+	for _, candidate := range candidates {
+		target, err := c.Main.Bridge.DB.Message.GetLastPartByID(ctx, receiver, networkid.MessageID(candidate))
+		if err == nil && target != nil {
+			return candidate
+		}
+	}
+	return candidates[0]
+}
+
+func buildReactionTargetMessageIDCandidates(messageID string, msg model.RemoteMessage) []string {
+	candidates := make([]string, 0, 8)
+	addCandidate := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		for _, existing := range candidates {
+			if existing == value {
+				return
+			}
+		}
+		candidates = append(candidates, value)
+	}
+	addCanonicalAndLegacy := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		normalized := NormalizeTeamsReactionMessageID(value)
+		addCandidate(normalized)
+		if normalized != "" {
+			addCandidate("msg/" + normalized)
+		}
+	}
+
+	// Prefer the selected ID first.
+	addCanonicalAndLegacy(messageID)
+	// Also try raw IDs from the payload, including clientmessageid for local echo targets.
+	addCanonicalAndLegacy(msg.MessageID)
+	addCanonicalAndLegacy(msg.SequenceID)
+	addCanonicalAndLegacy(msg.ClientMessageID)
+
+	return candidates
 }

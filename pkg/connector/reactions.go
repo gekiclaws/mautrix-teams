@@ -146,16 +146,12 @@ func NormalizeTeamsReactionMessageID(value string) string {
 	if value == "" {
 		return ""
 	}
-	if strings.HasPrefix(value, "msg/") || strings.Contains(value, "/") {
-		return value
+	if strings.HasPrefix(value, "msg/") {
+		return strings.TrimPrefix(value, "msg/")
 	}
-	return "msg/" + value
+	return value
 }
 
 func NormalizeTeamsReactionTargetMessageID(value string) string {
-	normalized := NormalizeTeamsReactionMessageID(value)
-	if strings.HasPrefix(normalized, "msg/") {
-		return strings.TrimPrefix(normalized, "msg/")
-	}
-	return normalized
+	return NormalizeTeamsReactionMessageID(value)
 }
