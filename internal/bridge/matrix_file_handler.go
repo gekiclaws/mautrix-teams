@@ -22,10 +22,11 @@ type MatrixAttachment struct {
 }
 
 type MatrixFileInfo struct {
-	MXCURL   string
-	FileName string
-	MimeType string
-	Caption  string
+	MXCURL        string
+	FileName      string
+	MimeType      string
+	Caption       string
+	EncryptedFile *event.EncryptedFileInfo
 }
 
 func ExtractMatrixFileInfo(content *event.MessageEventContent) (MatrixFileInfo, error) {
@@ -35,12 +36,15 @@ func ExtractMatrixFileInfo(content *event.MessageEventContent) (MatrixFileInfo, 
 	if content.MsgType != event.MsgFile {
 		return MatrixFileInfo{}, errors.New("not a file message")
 	}
-	// Encrypted attachments are out of scope for this ticket.
-	if content.File != nil {
-		return MatrixFileInfo{}, errors.New("encrypted file messages are not supported")
-	}
 
-	mxcURL := strings.TrimSpace(string(content.URL))
+	mxcURL := ""
+	var encryptedFile *event.EncryptedFileInfo
+	if content.File != nil {
+		encryptedFile = content.File
+		mxcURL = strings.TrimSpace(string(content.File.URL))
+	} else {
+		mxcURL = strings.TrimSpace(string(content.URL))
+	}
 	if mxcURL == "" {
 		return MatrixFileInfo{}, errors.New("missing mxc url")
 	}
@@ -64,10 +68,11 @@ func ExtractMatrixFileInfo(content *event.MessageEventContent) (MatrixFileInfo, 
 	}
 
 	return MatrixFileInfo{
-		MXCURL:   mxcURL,
-		FileName: fileName,
-		MimeType: mimeType,
-		Caption:  caption,
+		MXCURL:        mxcURL,
+		FileName:      fileName,
+		MimeType:      mimeType,
+		Caption:       caption,
+		EncryptedFile: encryptedFile,
 	}, nil
 }
 
@@ -76,7 +81,7 @@ func HandleOutboundMatrixFile(
 	roomID id.RoomID,
 	threadID string,
 	content *event.MessageEventContent,
-	download func(context.Context, string) ([]byte, error),
+	download func(context.Context, string, *event.EncryptedFileInfo) ([]byte, error),
 	send func(context.Context, string, string, []byte, string) error,
 	log *zerolog.Logger,
 ) error {
@@ -103,7 +108,7 @@ func HandleOutboundMatrixFile(
 		Str("filename", info.FileName).
 		Logger()
 
-	b, err := download(ctx, info.MXCURL)
+	b, err := download(ctx, info.MXCURL, info.EncryptedFile)
 	if err != nil {
 		l.Err(err).Msg("matrix file download failed")
 		return err

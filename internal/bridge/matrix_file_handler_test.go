@@ -19,9 +19,12 @@ func TestHandleOutboundMatrixFileSuccess(t *testing.T) {
 	var gotThreadID, gotFileName, gotCaption string
 	var gotLen int
 
-	download := func(ctx context.Context, mxcURL string) ([]byte, error) {
+	download := func(ctx context.Context, mxcURL string, file *event.EncryptedFileInfo) ([]byte, error) {
 		_ = ctx
 		downloadCalls++
+		if file != nil {
+			t.Fatalf("expected unencrypted download, got encrypted file info")
+		}
 		if mxcURL != "mxc://example.org/abc123" {
 			t.Fatalf("unexpected mxc url: %q", mxcURL)
 		}
@@ -104,7 +107,7 @@ func TestCaptionExtraction(t *testing.T) {
 }
 
 func TestHandleOutboundMatrixFileMissingMXCURL(t *testing.T) {
-	download := func(ctx context.Context, mxcURL string) ([]byte, error) {
+	download := func(ctx context.Context, mxcURL string, file *event.EncryptedFileInfo) ([]byte, error) {
 		t.Fatalf("download should not be called")
 		return nil, nil
 	}
@@ -127,9 +130,10 @@ func TestHandleOutboundMatrixFileMissingMXCURL(t *testing.T) {
 
 func TestHandleOutboundMatrixFileDownloadFailure(t *testing.T) {
 	var sendCalls int
-	download := func(ctx context.Context, mxcURL string) ([]byte, error) {
+	download := func(ctx context.Context, mxcURL string, file *event.EncryptedFileInfo) ([]byte, error) {
 		_ = ctx
 		_ = mxcURL
+		_ = file
 		return nil, errors.New("download failed")
 	}
 	send := func(ctx context.Context, threadID, filename string, content []byte, caption string) error {
@@ -155,9 +159,10 @@ func TestHandleOutboundMatrixFileDownloadFailure(t *testing.T) {
 
 func TestHandleOutboundMatrixFileTooLargeRejectedBeforeSend(t *testing.T) {
 	var sendCalls int
-	download := func(ctx context.Context, mxcURL string) ([]byte, error) {
+	download := func(ctx context.Context, mxcURL string, file *event.EncryptedFileInfo) ([]byte, error) {
 		_ = ctx
 		_ = mxcURL
+		_ = file
 		return make([]byte, MaxAttachmentBytesV0+1), nil
 	}
 	send := func(ctx context.Context, threadID, filename string, content []byte, caption string) error {
@@ -178,5 +183,45 @@ func TestHandleOutboundMatrixFileTooLargeRejectedBeforeSend(t *testing.T) {
 	}
 	if sendCalls != 0 {
 		t.Fatalf("expected send not called, got %d", sendCalls)
+	}
+}
+
+func TestHandleOutboundMatrixFileEncryptedUsesFileURL(t *testing.T) {
+	var downloadCalls int
+	download := func(ctx context.Context, mxcURL string, file *event.EncryptedFileInfo) ([]byte, error) {
+		_ = ctx
+		downloadCalls++
+		if mxcURL != "mxc://example.org/enc123" {
+			t.Fatalf("unexpected mxc url: %q", mxcURL)
+		}
+		if file == nil {
+			t.Fatalf("expected encrypted file info")
+		}
+		return []byte("plaintext"), nil
+	}
+	send := func(ctx context.Context, threadID, filename string, content []byte, caption string) error {
+		_ = ctx
+		_ = threadID
+		_ = filename
+		_ = content
+		_ = caption
+		return nil
+	}
+
+	content := &event.MessageEventContent{
+		MsgType: event.MsgFile,
+		Body:    "spec.pdf",
+		File: &event.EncryptedFileInfo{
+			URL: id.ContentURIString("mxc://example.org/enc123"),
+		},
+	}
+
+	log := zerolog.Nop()
+	err := HandleOutboundMatrixFile(context.Background(), id.RoomID("!room:example.org"), "@19:abc@thread.v2", content, download, send, &log)
+	if err != nil {
+		t.Fatalf("HandleOutboundMatrixFile failed: %v", err)
+	}
+	if downloadCalls != 1 {
+		t.Fatalf("expected download called once, got %d", downloadCalls)
 	}
 }

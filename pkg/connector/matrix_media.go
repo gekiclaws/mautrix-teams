@@ -10,10 +10,15 @@ import (
 	internalbridge "go.mau.fi/mautrix-teams/internal/bridge"
 
 	"maunium.net/go/mautrix/bridgev2/matrix"
+	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
 )
 
 func (c *TeamsClient) DownloadMatrixMedia(ctx context.Context, mxcURL string) ([]byte, error) {
+	return c.downloadMatrixMedia(ctx, mxcURL, nil)
+}
+
+func (c *TeamsClient) downloadMatrixMedia(ctx context.Context, mxcURL string, file *event.EncryptedFileInfo) ([]byte, error) {
 	mxcURL = strings.TrimSpace(mxcURL)
 	if mxcURL == "" {
 		return nil, errors.New("missing mxc url")
@@ -56,6 +61,17 @@ func (c *TeamsClient) DownloadMatrixMedia(ctx context.Context, mxcURL string) ([
 	}
 	if len(data) == 0 && resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
 		return nil, errors.New("downloaded media is empty")
+	}
+
+	if file != nil {
+		// Decrypt after size limiting; ciphertext is slightly larger than plaintext,
+		// but this enforces the same guardrail as the attachment pipeline.
+		if err := file.PrepareForDecryption(); err != nil {
+			return nil, err
+		}
+		if err := file.DecryptInPlace(data); err != nil {
+			return nil, err
+		}
 	}
 
 	return data, nil

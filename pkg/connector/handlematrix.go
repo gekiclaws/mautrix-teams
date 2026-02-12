@@ -62,12 +62,15 @@ func (c *TeamsClient) HandleMatrixMessage(ctx context.Context, msg *bridgev2.Mat
 			_, err := c.sendAttachmentMessageWithClientMessageID(ctx, threadID, filename, content, caption, clientMessageID)
 			return err
 		}
+		download := func(ctx context.Context, mxcURL string, file *event.EncryptedFileInfo) ([]byte, error) {
+			return c.downloadMatrixMedia(ctx, mxcURL, file)
+		}
 		err = internalbridge.HandleOutboundMatrixFile(
 			ctx,
 			msg.Portal.MXID,
 			threadID,
 			msg.Content,
-			c.DownloadMatrixMedia,
+			download,
 			send,
 			&c.Login.Log,
 		)
