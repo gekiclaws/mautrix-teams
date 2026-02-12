@@ -12,6 +12,7 @@ import (
 	"maunium.net/go/mautrix/bridgev2/networkid"
 	"maunium.net/go/mautrix/event"
 
+	internalbridge "go.mau.fi/mautrix-teams/internal/bridge"
 	consumerclient "go.mau.fi/mautrix-teams/internal/teams/client"
 )
 
@@ -52,9 +53,62 @@ func (c *TeamsClient) HandleMatrixMessage(ctx context.Context, msg *bridgev2.Mat
 	case event.MsgImage:
 		title, gifURL, ok := extractOutboundGIF(msg.Content)
 		if !ok {
-			return nil, bridgev2.ErrUnsupportedMessageType
+			// Not a GIF: treat it like a normal attachment (e.g. PNG/JPEG).
+			send := func(ctx context.Context, threadID, filename string, content []byte, caption string) error {
+				_, err := c.sendAttachmentMessageWithClientMessageID(ctx, threadID, filename, content, caption, clientMessageID)
+				return err
+			}
+			download := func(ctx context.Context, mxcURL string, file *event.EncryptedFileInfo) ([]byte, error) {
+				return c.downloadMatrixMedia(ctx, mxcURL, file)
+			}
+			err = internalbridge.HandleOutboundMatrixFile(
+				ctx,
+				msg.Portal.MXID,
+				threadID,
+				msg.Content,
+				download,
+				send,
+				&c.Login.Log,
+			)
+			break
 		}
 		_, err = consumer.SendGIFWithID(ctx, threadID, gifURL, title, c.Meta.TeamsUserID, clientMessageID)
+	case event.MsgFile:
+		// Matrix file messages are handled by downloading the MXC content and passing it to the attachment pipeline.
+		send := func(ctx context.Context, threadID, filename string, content []byte, caption string) error {
+			_, err := c.sendAttachmentMessageWithClientMessageID(ctx, threadID, filename, content, caption, clientMessageID)
+			return err
+		}
+		download := func(ctx context.Context, mxcURL string, file *event.EncryptedFileInfo) ([]byte, error) {
+			return c.downloadMatrixMedia(ctx, mxcURL, file)
+		}
+		err = internalbridge.HandleOutboundMatrixFile(
+			ctx,
+			msg.Portal.MXID,
+			threadID,
+			msg.Content,
+			download,
+			send,
+			&c.Login.Log,
+		)
+	case event.MsgVideo, event.MsgAudio:
+		// Treat video/audio like a normal attachment.
+		send := func(ctx context.Context, threadID, filename string, content []byte, caption string) error {
+			_, err := c.sendAttachmentMessageWithClientMessageID(ctx, threadID, filename, content, caption, clientMessageID)
+			return err
+		}
+		download := func(ctx context.Context, mxcURL string, file *event.EncryptedFileInfo) ([]byte, error) {
+			return c.downloadMatrixMedia(ctx, mxcURL, file)
+		}
+		err = internalbridge.HandleOutboundMatrixFile(
+			ctx,
+			msg.Portal.MXID,
+			threadID,
+			msg.Content,
+			download,
+			send,
+			&c.Login.Log,
+		)
 	default:
 		return nil, bridgev2.ErrUnsupportedMessageType
 	}

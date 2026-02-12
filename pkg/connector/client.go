@@ -15,6 +15,7 @@ import (
 	"maunium.net/go/mautrix/bridgev2/status"
 	"maunium.net/go/mautrix/event"
 
+	internalbridge "go.mau.fi/mautrix-teams/internal/bridge"
 	"go.mau.fi/mautrix-teams/internal/teams/auth"
 	consumerclient "go.mau.fi/mautrix-teams/internal/teams/client"
 	"go.mau.fi/mautrix-teams/pkg/teamsid"
@@ -176,8 +177,22 @@ func (c *TeamsClient) GetUserInfo(ctx context.Context, ghost *bridgev2.Ghost) (*
 func (c *TeamsClient) GetCapabilities(ctx context.Context, portal *bridgev2.Portal) *event.RoomFeatures {
 	_ = ctx
 	_ = portal
+	fileFeatures := &event.FileFeatures{
+		MimeTypes: map[string]event.CapabilitySupportLevel{
+			"*/*": event.CapLevelFullySupported,
+		},
+		Caption: event.CapLevelFullySupported,
+		MaxSize: internalbridge.MaxAttachmentBytesV0,
+	}
 	return &event.RoomFeatures{
-		ID:                     "fi.mau.teams.capabilities.2026_02_11",
+		// Bump when capabilities change so Beeper refreshes cached feature info.
+		ID: "fi.mau.teams.capabilities.2026_02_12_3",
+		File: event.FileFeatureMap{
+			event.MsgFile:  fileFeatures,
+			event.MsgImage: fileFeatures,
+			event.MsgVideo: fileFeatures,
+			event.MsgAudio: fileFeatures,
+		},
 		Reaction:               event.CapLevelFullySupported,
 		TypingNotifications:    true,
 		ReadReceipts:           true,

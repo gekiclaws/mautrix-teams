@@ -161,6 +161,17 @@ func (c *Client) SendGIFWithID(ctx context.Context, threadID string, gifURL stri
 }
 
 func (c *Client) sendHTMLMessageWithID(ctx context.Context, threadID string, htmlContent string, fromUserID string, clientMessageID string) (int, error) {
+	return c.sendRichTextMessageWithID(ctx, threadID, htmlContent, "", fromUserID, clientMessageID, false)
+}
+
+func (c *Client) SendAttachmentMessageWithID(ctx context.Context, threadID string, htmlContent string, filesProperty string, fromUserID string, clientMessageID string) (int, error) {
+	if strings.TrimSpace(filesProperty) == "" {
+		return 0, errors.New("missing files property")
+	}
+	return c.sendRichTextMessageWithID(ctx, threadID, htmlContent, filesProperty, fromUserID, clientMessageID, true)
+}
+
+func (c *Client) sendRichTextMessageWithID(ctx context.Context, threadID string, htmlContent string, filesProperty string, fromUserID string, clientMessageID string, allowEmptyContent bool) (int, error) {
 	if c == nil || c.HTTP == nil {
 		return 0, ErrMissingHTTPClient
 	}
@@ -171,7 +182,7 @@ func (c *Client) sendHTMLMessageWithID(ctx context.Context, threadID string, htm
 	if threadID == "" {
 		return 0, errors.New("missing thread id")
 	}
-	if strings.TrimSpace(htmlContent) == "" {
+	if !allowEmptyContent && strings.TrimSpace(htmlContent) == "" {
 		return 0, errors.New("missing message content")
 	}
 	if strings.TrimSpace(fromUserID) == "" {
@@ -195,7 +206,7 @@ func (c *Client) sendHTMLMessageWithID(ctx context.Context, threadID string, htm
 	messagesURL := fmt.Sprintf("%s/%s/messages", baseURL, url.PathEscape(threadID))
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	payload := map[string]string{
+	payload := map[string]interface{}{
 		"type":                "Message",
 		"conversationid":      threadID,
 		"content":             htmlContent,
@@ -206,6 +217,11 @@ func (c *Client) sendHTMLMessageWithID(ctx context.Context, threadID string, htm
 		"originalarrivaltime": now,
 		"from":                fromUserID,
 		"fromUserId":          fromUserID,
+	}
+	if strings.TrimSpace(filesProperty) != "" {
+		payload["properties"] = map[string]string{
+			"files": filesProperty,
+		}
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {

@@ -68,6 +68,13 @@ func ExtractTokensFromMSALLocalStorage(raw string, clientID string) (*AuthState,
 				state.ExpiresAtUnix = expiresAt
 			}
 		}
+		graphAccessToken, graphExpiresAt := selectGraphAccessToken(storage, keys.AccessToken)
+		if graphAccessToken != "" {
+			state.GraphAccessToken = graphAccessToken
+			if graphExpiresAt != 0 {
+				state.GraphExpiresAt = graphExpiresAt
+			}
+		}
 	}
 
 	if len(keys.IDToken) > 0 {
@@ -114,6 +121,37 @@ func matchesMBITarget(target string) bool {
 	}
 	lower := strings.ToLower(target)
 	return strings.Contains(lower, mbiAccessTokenMarker)
+}
+
+func selectGraphAccessToken(storage map[string]string, keys []string) (string, int64) {
+	var bestToken string
+	var bestExpiry int64
+	for _, key := range keys {
+		raw, ok := storage[key]
+		if !ok || raw == "" {
+			continue
+		}
+		var entry msalTokenEntry
+		if err := json.Unmarshal([]byte(raw), &entry); err != nil {
+			continue
+		}
+		if entry.Secret == "" || !matchesGraphTarget(entry.Target) {
+			continue
+		}
+		expiry, _ := parseMSALExpires(entry.ExpiresOn)
+		if bestToken == "" || expiry > bestExpiry {
+			bestToken = entry.Secret
+			bestExpiry = expiry
+		}
+	}
+	return bestToken, bestExpiry
+}
+
+func matchesGraphTarget(target string) bool {
+	if target == "" {
+		return false
+	}
+	return strings.Contains(strings.ToLower(target), "graph.microsoft.com")
 }
 
 func parseStorage(raw string) (map[string]string, error) {

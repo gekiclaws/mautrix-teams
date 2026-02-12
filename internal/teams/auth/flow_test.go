@@ -7,9 +7,10 @@ import (
 
 func TestExtractTokensFromMSALLocalStorage(t *testing.T) {
 	storage := map[string]string{
-		"msal.token.keys." + defaultClientID: `{"refreshToken":["rt"],"idToken":["idt"]}`,
+		"msal.token.keys." + defaultClientID: `{"refreshToken":["rt"],"idToken":["idt"],"accessToken":["graph"]}`,
 		"rt":                                 `{"secret":"refresh-secret","expiresOn":"1700000000"}`,
 		"idt":                                `{"secret":"id-secret"}`,
+		"graph":                              `{"secret":"graph-secret","expiresOn":"1700000200","target":"https://graph.microsoft.com/Files.ReadWrite User.Read"}`,
 	}
 	payload, err := json.Marshal(storage)
 	if err != nil {
@@ -28,6 +29,12 @@ func TestExtractTokensFromMSALLocalStorage(t *testing.T) {
 	}
 	if state.IDToken != "id-secret" {
 		t.Fatalf("unexpected id token: %s", state.IDToken)
+	}
+	if state.GraphAccessToken != "graph-secret" {
+		t.Fatalf("unexpected graph token: %s", state.GraphAccessToken)
+	}
+	if state.GraphExpiresAt != 1700000200 {
+		t.Fatalf("unexpected graph expiry: %d", state.GraphExpiresAt)
 	}
 }
 
@@ -75,5 +82,8 @@ func TestExtractTokensFromMSALLocalStorage_MissingMBIAccessTokenIsNonFatal(t *te
 	}
 	if state.AccessToken != "" {
 		t.Fatalf("expected empty access token, got %s", state.AccessToken)
+	}
+	if state.GraphAccessToken != "" {
+		t.Fatalf("expected empty graph token, got %s", state.GraphAccessToken)
 	}
 }

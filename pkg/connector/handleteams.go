@@ -122,6 +122,9 @@ func (c *TeamsClient) ensureValidSkypeToken(ctx context.Context) error {
 	if c.Main != nil && strings.TrimSpace(c.Main.Config.ClientID) != "" {
 		authClient.ClientID = strings.TrimSpace(c.Main.Config.ClientID)
 	}
+	// Keep this refresh scoped for skypetoken bootstrap. Graph token persistence
+	// is best-effort and should not affect skypetoken acquisition.
+	authClient.Scopes = []string{mbiRefreshScope, "offline_access"}
 
 	state, err := authClient.RefreshAccessToken(ctx, refresh)
 	if err != nil {
@@ -139,6 +142,12 @@ func (c *TeamsClient) ensureValidSkypeToken(ctx context.Context) error {
 	c.Meta.AccessTokenExpiresAt = state.ExpiresAtUnix
 	c.Meta.SkypeToken = skypeToken
 	c.Meta.SkypeTokenExpiresAt = skypeExpiresAt
+	// Only overwrite Graph token fields if refresh response includes them. Do not
+	// wipe a stored valid Graph token when MBI refresh omits Graph tokens.
+	if strings.TrimSpace(state.GraphAccessToken) != "" && state.GraphExpiresAt != 0 {
+		c.Meta.GraphAccessToken = strings.TrimSpace(state.GraphAccessToken)
+		c.Meta.GraphExpiresAt = state.GraphExpiresAt
+	}
 	c.Meta.TeamsUserID = auth.NormalizeTeamsUserID(skypeID)
 	c.Login.RemoteName = c.Meta.TeamsUserID
 
