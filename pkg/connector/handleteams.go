@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	threadDiscoveryInterval = 10 * time.Minute
+	threadDiscoveryInterval = 30 * time.Second
 )
 
 func (c *TeamsClient) startSyncLoop() {
@@ -72,28 +72,13 @@ func (c *TeamsClient) stopSyncLoop(timeout time.Duration) {
 func (c *TeamsClient) syncLoop(ctx context.Context) {
 	log := zerolog.Ctx(ctx)
 	// Run once immediately to seed portals.
-	if err := c.syncOnce(ctx); err != nil {
+	err := c.syncOnce(ctx)
+	if err != nil {
 		log.Err(err).Msg("Teams sync loop initial run failed")
 	}
 
-	// Keep refreshing thread list in the background.
-	go func() {
-		ticker := time.NewTicker(threadDiscoveryInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				if err := c.refreshThreads(ctx); err != nil {
-					log.Err(err).Msg("Teams thread discovery refresh failed")
-				}
-			}
-		}
-	}()
-
 	// Poll threads continuously with per-thread scheduling until canceled.
-	if err := c.pollDueThreads(ctx); err != nil && !errors.Is(err, context.Canceled) {
+	if err := c.pollDueThreads(ctx, err == nil); err != nil && !errors.Is(err, context.Canceled) {
 		log.Err(err).Msg("Teams polling loop exited")
 	}
 }
@@ -233,10 +218,11 @@ func (c *TeamsClient) pollAllThreadsOnce(ctx context.Context) error {
 	return nil
 }
 
-func (c *TeamsClient) pollDueThreads(ctx context.Context) error {
+func (c *TeamsClient) pollDueThreads(ctx context.Context, initialDiscoverySucceeded bool) error {
 	if c == nil || c.Main == nil || c.Main.DB == nil || c.Login == nil {
 		return nil
 	}
+	log := zerolog.Ctx(ctx)
 	threads, err := c.Main.DB.ThreadState.ListForLogin(ctx, c.Login.ID)
 	if err != nil {
 		return err
@@ -250,11 +236,21 @@ func (c *TeamsClient) pollDueThreads(ctx context.Context) error {
 		states[th.ThreadID] = &pollState{backoff: PollBackoff{Delay: pollBaseDelay}, nextPoll: time.Now().UTC()}
 	}
 
+	nextDiscovery := time.Now().UTC().Add(threadDiscoveryInterval)
+	if !initialDiscoverySucceeded {
+		nextDiscovery = time.Time{}
+	}
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		now := time.Now().UTC()
+		if nextDiscovery.IsZero() || !now.Before(nextDiscovery) {
+			if err := c.refreshThreads(ctx); err != nil {
+				log.Err(err).Msg("Teams thread discovery refresh failed")
+			}
+			nextDiscovery = now.Add(threadDiscoveryInterval)
+		}
 		nextWake := now.Add(5 * time.Second)
 
 		threads, err := c.Main.DB.ThreadState.ListForLogin(ctx, c.Login.ID)
