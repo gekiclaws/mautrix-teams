@@ -8,6 +8,7 @@ import (
 
 	"go.mau.fi/mautrix-teams/internal/teams/auth"
 	"go.mau.fi/mautrix-teams/pkg/teamsid"
+
 	"maunium.net/go/mautrix/bridgev2"
 )
 
