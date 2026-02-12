@@ -30,14 +30,14 @@ func (e ConversationsError) Error() string {
 }
 
 type Client struct {
-	HTTP             *http.Client
-	Executor         *TeamsRequestExecutor
-	ConversationsURL string
-	MessagesURL      string
-	SendMessagesURL  string
+	HTTP                   *http.Client
+	Executor               *TeamsRequestExecutor
+	ConversationsURL       string
+	MessagesURL            string
+	SendMessagesURL        string
 	ConsumptionHorizonsURL string
-	Token            string
-	Log              *zerolog.Logger
+	Token                  string
+	Log                    *zerolog.Logger
 }
 
 func NewClient(httpClient *http.Client) *Client {
@@ -49,10 +49,10 @@ func NewClient(httpClient *http.Client) *Client {
 		MaxBackoff:  10 * time.Second,
 	}
 	return &Client{
-		HTTP:             httpClient,
-		Executor:         executor,
-		ConversationsURL: defaultConversationsURL,
-		SendMessagesURL:  defaultSendMessagesURL,
+		HTTP:                   httpClient,
+		Executor:               executor,
+		ConversationsURL:       defaultConversationsURL,
+		SendMessagesURL:        defaultSendMessagesURL,
 		ConsumptionHorizonsURL: defaultConsumptionHorizonsURL,
 	}
 }

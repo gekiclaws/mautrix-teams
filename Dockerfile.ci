@@ -1,4 +1,6 @@
-FROM alpine:3.22
+ARG DOCKER_HUB="docker.io"
+
+FROM ${DOCKER_HUB}/alpine:3.23
 
 ENV UID=1337 \
     GID=1337
@@ -7,8 +9,9 @@ RUN apk add --no-cache ffmpeg su-exec ca-certificates bash jq curl yq-go lottiec
 
 ARG EXECUTABLE=./mautrix-teams
 COPY $EXECUTABLE /usr/bin/mautrix-teams
-COPY ./example-config.yaml /opt/mautrix-teams/example-config.yaml
 COPY ./docker-run.sh /docker-run.sh
+ENV BRIDGEV2=1
 VOLUME /data
+WORKDIR /data
 
 CMD ["/docker-run.sh"]

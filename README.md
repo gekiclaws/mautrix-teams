@@ -2,20 +2,15 @@
 A Matrix-Teams puppeting bridge.
 
 ## How to setup bridge
-From repo root:
-1. Run `bbctl login`, then `bbctl register sh-msteams`
-2. Copy the registration file details verbatim into `registration.yaml`
-3. Copy `example-config.yaml` into `config.yaml`
-4. Use the details from `bbctl register sh-msteams` log to update config.yaml fields:
-- Homeserver URL -> homeserver.address
-- Homeserver domain -> homeserver.domain
-- Your user ID -> replace the "@admin:example.com" field under admin.permissions
-  for example: "@admin:example.com": admin -> "@gekiclaws:beeper.com": admin
-- as_token -> appservice.as_token
-- hs_token -> appservice.hs_token
+1. Run `bbctl --env prod config sh-msteams`
+2. Select `bridgev2` for bridge type
+3. Copy the generated config into `config.yaml`
 
 ## How to run the bridge
 From repo root:
-1. Get Teams auth credentials via `go run ./cmd/teams-login/`
-2. Build the bridge via `go build -o mautrix-teams`
-3. Run the bridge via `./mautrix-teams`
+1. Run `./build.sh`
+2. Run `./mautrix-teams`
+
+In Beeper Desktop:
+1. Go to Bridges tab
+2. Click on 3 vertical dots -> Experimental: Add an account

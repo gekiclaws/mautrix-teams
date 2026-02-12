@@ -4,10 +4,12 @@
 
 *.db*
 *.log*
+.DS_Store
 
 /start
 synapse-data/localhost.signing.key
 auth.json
 cookies.json
 .env
-mautrix-teams
+/mautrix-teams
+/teams-login
