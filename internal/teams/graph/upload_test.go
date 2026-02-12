@@ -35,7 +35,7 @@ func TestUploadTeamsChatFileSuccess(t *testing.T) {
 			if r.URL.Query().Get("@microsoft.graph.conflictBehavior") != "rename" {
 				t.Fatalf("missing conflictBehavior query")
 			}
-			if r.URL.Query().Get("$select") != "*,sharepointIds" {
+			if r.URL.Query().Get("$select") != "id,name,size,sharepointIds,parentReference" {
 				t.Fatalf("missing $select query")
 			}
 			if r.Header.Get("Authorization") != "Bearer "+token {

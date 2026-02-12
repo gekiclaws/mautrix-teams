@@ -33,7 +33,9 @@ func ExtractMatrixFileInfo(content *event.MessageEventContent) (MatrixFileInfo, 
 	if content == nil {
 		return MatrixFileInfo{}, errors.New("missing message content")
 	}
-	if content.MsgType != event.MsgFile {
+	switch content.MsgType {
+	case event.MsgFile, event.MsgImage, event.MsgVideo, event.MsgAudio:
+	default:
 		return MatrixFileInfo{}, errors.New("not a file message")
 	}
 

@@ -71,6 +71,56 @@ func TestHandleOutboundMatrixFileSuccess(t *testing.T) {
 	}
 }
 
+func TestHandleOutboundMatrixImageSuccess(t *testing.T) {
+	var downloadCalls int
+	var sendCalls int
+
+	wantBytes := []byte("pngdata")
+	var gotFileName string
+
+	download := func(ctx context.Context, mxcURL string, file *event.EncryptedFileInfo) ([]byte, error) {
+		_ = ctx
+		downloadCalls++
+		if mxcURL != "mxc://example.org/img123" {
+			t.Fatalf("unexpected mxc url: %q", mxcURL)
+		}
+		return wantBytes, nil
+	}
+	send := func(ctx context.Context, threadID, filename string, content []byte, caption string) error {
+		_ = ctx
+		_ = threadID
+		_ = content
+		_ = caption
+		sendCalls++
+		gotFileName = filename
+		return nil
+	}
+
+	content := &event.MessageEventContent{
+		MsgType: event.MsgImage,
+		Body:    "image.png",
+		URL:     id.ContentURIString("mxc://example.org/img123"),
+		Info: &event.FileInfo{
+			MimeType: "image/png",
+		},
+	}
+
+	log := zerolog.Nop()
+	err := HandleOutboundMatrixFile(context.Background(), id.RoomID("!room:example.org"), "@19:abc@thread.v2", content, download, send, &log)
+	if err != nil {
+		t.Fatalf("HandleOutboundMatrixFile failed: %v", err)
+	}
+	if downloadCalls != 1 {
+		t.Fatalf("expected download called once, got %d", downloadCalls)
+	}
+	if sendCalls != 1 {
+		t.Fatalf("expected send called once, got %d", sendCalls)
+	}
+	if gotFileName != "image.png" {
+		t.Fatalf("unexpected filename: %q", gotFileName)
+	}
+}
+
 func TestCaptionExtraction(t *testing.T) {
 	info1, err := ExtractMatrixFileInfo(&event.MessageEventContent{
 		MsgType: event.MsgFile,

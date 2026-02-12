@@ -142,7 +142,26 @@ func (c *GraphClient) UploadTeamsChatFile(ctx context.Context, filename string, 
 		return nil, err
 	}
 	defer resp.Body.Close()
-	return parseUploadedDriveItem(resp.Body)
+
+	// Graph may omit SharePoint fields from the upload response; fall back to fetching the drive item.
+	raw, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		return nil, readErr
+	}
+	item, parseErr := parseUploadedDriveItem(bytes.NewReader(raw))
+	if parseErr == nil {
+		return item, nil
+	}
+	var minimal struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(raw, &minimal); err == nil && strings.TrimSpace(minimal.ID) != "" {
+		fetched, err := c.GetDriveItem(ctx, minimal.ID)
+		if err == nil {
+			return fetched, nil
+		}
+	}
+	return nil, parseErr
 }
 
 func parseUploadedDriveItem(r io.Reader) (*UploadedDriveItem, error) {
@@ -189,7 +208,7 @@ func (c *GraphClient) uploadURL(filename string) (string, error) {
 	endpoint := strings.TrimRight(base, "/") + "/" + escapedName + ":/content"
 	q := url.Values{}
 	q.Set("@microsoft.graph.conflictBehavior", "rename")
-	q.Set("$select", "*,sharepointIds")
+	q.Set("$select", "id,name,size,sharepointIds,parentReference")
 	return endpoint + "?" + q.Encode(), nil
 }
 
