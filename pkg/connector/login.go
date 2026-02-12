@@ -102,6 +102,7 @@ func (l *MSALLocalStorageLogin) SubmitUserInput(ctx context.Context, input map[s
 	if err != nil {
 		return nil, err
 	}
+	startLoginConnect(ul, loginConnectBaseCtx(l.Main))
 
 	return &bridgev2.LoginStep{
 		Type:         bridgev2.LoginStepTypeComplete,
@@ -190,6 +191,7 @@ func (l *WebviewLocalStorageLogin) SubmitCookies(ctx context.Context, cookies ma
 	if err != nil {
 		return nil, err
 	}
+	startLoginConnect(ul, loginConnectBaseCtx(l.Main))
 	return &bridgev2.LoginStep{
 		Type:         bridgev2.LoginStepTypeComplete,
 		StepID:       "go.mau.teams.complete",
@@ -228,4 +230,23 @@ func extractMetaFromStorage(ctx context.Context, raw string, clientID string) (*
 		SkypeTokenExpiresAt:  expiresAt,
 		TeamsUserID:          teamsUserID,
 	}, nil
+}
+
+func loginConnectBaseCtx(main *TeamsConnector) context.Context {
+	if main != nil && main.Bridge != nil && main.Bridge.BackgroundCtx != nil {
+		return main.Bridge.BackgroundCtx
+	}
+	return context.Background()
+}
+
+func startLoginConnect(login *bridgev2.UserLogin, baseCtx context.Context) {
+	if login == nil || login.Client == nil {
+		return
+	}
+	ctx := baseCtx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx = login.Log.WithContext(ctx)
+	go login.Client.Connect(ctx)
 }
