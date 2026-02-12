@@ -82,12 +82,12 @@ func (c RemoteConversation) resolveRoomName(isOneToOne bool, selfUserID string) 
 		if dmName := c.resolveDMName(selfUserID); dmName != "" {
 			return dmName
 		}
-		return "Chat"
+		return ""
 	}
 	if name := c.resolveThreadName(); name != "" {
 		return name
 	}
-	return "Chat"
+	return ""
 }
 
 func (c RemoteConversation) resolveDMName(selfUserID string) string {
