@@ -328,12 +328,27 @@ func (c *TeamsClient) pollThread(ctx context.Context, th *teamsdb.ThreadState, n
 		if strings.TrimSpace(msg.MessageID) == "" {
 			continue
 		}
-		senderID := model.NormalizeTeamsUserID(msg.SenderID)
 		effectiveMessageID := c.effectiveRemoteMessageID(msg)
 		// Filter already-seen messages in case the remote API returns history.
 		if lastSeq != "" && model.CompareSequenceID(strings.TrimSpace(msg.SequenceID), lastSeq) <= 0 {
 			// Still process reactions on older messages for sync parity.
 			c.queueReactionSyncForMessage(ctx, th, msg, effectiveMessageID)
+			continue
+		}
+		if maxSeq == "" || model.CompareSequenceID(strings.TrimSpace(msg.SequenceID), maxSeq) > 0 {
+			maxSeq = strings.TrimSpace(msg.SequenceID)
+		}
+		if ts := msg.Timestamp.UnixMilli(); ts > maxTS {
+			maxTS = ts
+		}
+
+		senderID := model.NormalizeTeamsUserID(msg.SenderID)
+		if senderID == "" || strings.EqualFold(senderID, strings.TrimSpace(th.ThreadID)) || isLikelyThreadID(senderID) {
+			zerolog.Ctx(ctx).Debug().
+				Str("thread_id", th.ThreadID).
+				Str("message_id", msg.MessageID).
+				Str("sender_id", senderID).
+				Msg("Skipping Teams message with non-user sender ID")
 			continue
 		}
 
@@ -358,12 +373,6 @@ func (c *TeamsClient) pollThread(ctx context.Context, th *teamsdb.ThreadState, n
 
 		clientMessageID := strings.TrimSpace(msg.ClientMessageID)
 		isSelfEcho := senderID != "" && selfID != "" && senderID == selfID && c.consumeSelfMessage(clientMessageID)
-		if maxSeq == "" || model.CompareSequenceID(strings.TrimSpace(msg.SequenceID), maxSeq) > 0 {
-			maxSeq = strings.TrimSpace(msg.SequenceID)
-		}
-		if ts := msg.Timestamp.UnixMilli(); ts > maxTS {
-			maxTS = ts
-		}
 		ingested++
 
 		eventMessageID := effectiveMessageID
@@ -449,7 +458,7 @@ func (c *TeamsClient) pollConsumptionHorizons(ctx context.Context, th *teamsdb.T
 	for idx := range resp.Horizons {
 		entry := &resp.Horizons[idx]
 		entryID := model.NormalizeTeamsUserID(entry.ID)
-		if entryID == "" || entryID == selfID {
+		if entryID == "" || entryID == selfID || strings.EqualFold(entryID, threadID) || isLikelyThreadID(entryID) {
 			continue
 		}
 		nonSelfCount++
@@ -599,7 +608,7 @@ func (c *TeamsClient) buildReactionSyncData(reactions []model.MessageReaction) (
 		}
 		for _, user := range reaction.Users {
 			userID := model.NormalizeTeamsUserID(user.MRI)
-			if userID == "" {
+			if userID == "" || isLikelyThreadID(userID) {
 				continue
 			}
 			sender := bridgev2.EventSender{
