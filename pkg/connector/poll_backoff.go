@@ -116,4 +116,3 @@ func ApplyPollBackoff(b *PollBackoff, messagesIngested int, err error) (time.Dur
 	b.OnFailure()
 	return b.Delay, PollBackoffFailure
 }
-

@@ -106,4 +106,3 @@ High-level plan (as implemented):
 - `./build.sh` (pass; uses `go tool maubuild`)
 - `docker build .` (pass)
 - `pre-commit run -a` (pass)
-

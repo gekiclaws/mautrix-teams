@@ -84,4 +84,3 @@ func TestApplyPollBackoffClassification(t *testing.T) {
 		t.Fatalf("failure: expected reason=%q and delay>0, got (%v,%q)", PollBackoffFailure, delay, reason)
 	}
 }
-
