@@ -114,4 +114,3 @@ func classifyDriveItemContentResponse(resp *http.Response) error {
 	snippet, _ := io.ReadAll(io.LimitReader(resp.Body, maxUploadErrorBytes))
 	return GraphDriveItemContentError{Status: resp.StatusCode, BodySnippet: string(snippet)}
 }
-

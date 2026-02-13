@@ -42,4 +42,3 @@ func (c *TeamsClient) ensureValidGraphToken(ctx context.Context) error {
 
 	return c.Login.Save(ctx)
 }
-
