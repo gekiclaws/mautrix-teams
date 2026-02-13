@@ -232,9 +232,9 @@ func (c *TeamsClient) reuploadInboundAttachments(
 		}
 
 		part := &bridgev2.ConvertedMessagePart{
-			ID:    networkid.PartID(fmt.Sprintf("att_%d", i)),
-			Type:  event.EventMessage,
-			Extra: cloneExtra(extra),
+			ID:      networkid.PartID(fmt.Sprintf("att_%d", i)),
+			Type:    event.EventMessage,
+			Extra:   cloneExtra(extra),
 			Content: buildMediaContent(msgType, strings.TrimSpace(att.Filename), mimeType, len(content.Bytes), mxc, file),
 		}
 		mediaParts = append(mediaParts, part)
@@ -294,7 +294,7 @@ func buildMediaContent(
 	file *event.EncryptedFileInfo,
 ) *event.MessageEventContent {
 	content := &event.MessageEventContent{
-		MsgType:   msgType,
+		MsgType:  msgType,
 		Body:     filename,
 		FileName: filename,
 		Info: &event.FileInfo{
