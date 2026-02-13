@@ -5,6 +5,9 @@ import (
 	"strings"
 	"testing"
 
+	"maunium.net/go/mautrix/event"
+	"maunium.net/go/mautrix/id"
+
 	"go.mau.fi/mautrix-teams/internal/teams/model"
 )
 
@@ -66,7 +69,7 @@ func TestConvertTeamsMessageAddsPerMessageProfile(t *testing.T) {
 		SenderID:   "8:live:me",
 		SenderName: "Alice",
 	}
-	converted, err := convertTeamsMessage(context.Background(), nil, nil, msg)
+	converted, err := (&TeamsClient{}).convertTeamsMessage(context.Background(), nil, nil, msg)
 	if err != nil {
 		t.Fatalf("convertTeamsMessage failed: %v", err)
 	}
@@ -80,5 +83,21 @@ func TestConvertTeamsMessageAddsPerMessageProfile(t *testing.T) {
 	}
 	if perMessage["id"] != "8:live:me" || perMessage["displayname"] != "Alice" {
 		t.Fatalf("unexpected per_message_profile: %#v", perMessage)
+	}
+}
+
+func TestBuildMediaContentDoesNotClobberEncryptedFileURL(t *testing.T) {
+	enc := &event.EncryptedFileInfo{}
+	enc.URL = id.ContentURIString("mxc://example.org/abc123")
+
+	got := buildMediaContent(event.MsgImage, "x.png", "image/png", 3, "", enc)
+	if got.File == nil {
+		t.Fatalf("expected file info")
+	}
+	if got.File.URL != "mxc://example.org/abc123" {
+		t.Fatalf("unexpected file url: %q", got.File.URL)
+	}
+	if got.URL != "" {
+		t.Fatalf("expected empty url field when encrypted file is present, got %q", got.URL)
 	}
 }

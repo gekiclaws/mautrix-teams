@@ -400,7 +400,7 @@ func (c *TeamsClient) pollThread(ctx context.Context, th *teamsdb.ThreadState, n
 			Data:               msg,
 			ID:                 networkid.MessageID(eventMessageID),
 			TransactionID:      networkid.TransactionID(clientMessageID),
-			ConvertMessageFunc: convertTeamsMessage,
+			ConvertMessageFunc: c.convertTeamsMessage,
 		}
 		c.Login.QueueRemoteEvent(evt)
 		c.queueReactionSyncForMessage(ctx, th, msg, eventMessageID)
