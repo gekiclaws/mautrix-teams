@@ -303,7 +303,11 @@ func buildMediaContent(
 		},
 	}
 	if file != nil {
-		file.URL = mxc
+		// In encrypted rooms, bridgev2 UploadMedia returns url="" and populates file.URL.
+		// Don't clobber it by overwriting with the empty return value.
+		if file.URL == "" && mxc != "" {
+			file.URL = mxc
+		}
 		content.File = file
 	} else {
 		content.URL = mxc
