@@ -2,6 +2,7 @@ package connector
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"net/http"
 	"sort"
@@ -19,9 +20,13 @@ import (
 const (
 	FlowIDWebviewLocalStorage           = "webview_localstorage"
 	FlowIDEnterpriseWebviewLocalStorage = "enterprise_webview_localstorage"
+	FlowIDTokenInput                    = "token_input"
+	FlowIDEnterpriseTokenInput          = "enterprise_token_input"
 
 	LoginStepIDWebviewLocalStorage           = "go.mau.teams.webview_localstorage"
 	LoginStepIDEnterpriseWebviewLocalStorage = "go.mau.teams.enterprise_webview_localstorage"
+	LoginStepIDTokenInput                    = "go.mau.teams.token_input"
+	LoginStepIDEnterpriseTokenInput          = "go.mau.teams.enterprise_token_input"
 
 	teamsLoginSpecialStorage = "go.mau.teams.storage"
 	teamsLoginSpecialDebug   = "go.mau.teams.debug"
@@ -107,6 +112,18 @@ var loginFlowEnterpriseWebview = bridgev2.LoginFlow{
 	Name:        "teams.microsoft.com (Work/School)",
 	Description: "Login using an embedded browser for Work/School accounts.",
 	ID:          FlowIDEnterpriseWebviewLocalStorage,
+}
+
+var loginFlowTokenInput = bridgev2.LoginFlow{
+	Name:        "Token input (Consumer)",
+	Description: "Login by pasting a refresh token from Teams web (teams.live.com).",
+	ID:          FlowIDTokenInput,
+}
+
+var loginFlowEnterpriseTokenInput = bridgev2.LoginFlow{
+	Name:        "Token input (Work/School)",
+	Description: "Login by pasting a refresh token from Teams web (teams.microsoft.com).",
+	ID:          FlowIDEnterpriseTokenInput,
 }
 
 type WebviewLocalStorageLogin struct {
@@ -271,6 +288,33 @@ func startLoginConnect(login *bridgev2.UserLogin, baseCtx context.Context) {
 	go login.Client.Connect(ctx)
 }
 
+func stripQuotes(s string) string {
+	if len(s) >= 2 {
+		if (s[0] == '\'' && s[len(s)-1] == '\'') || (s[0] == '"' && s[len(s)-1] == '"') {
+			return s[1 : len(s)-1]
+		}
+	}
+	return s
+}
+
+func decodeBase64Token(b64 string) (string, error) {
+	// Try standard encoding first, then raw (no padding), then URL-safe variants.
+	if decoded, err := base64.StdEncoding.DecodeString(b64); err == nil {
+		return string(decoded), nil
+	}
+	if decoded, err := base64.RawStdEncoding.DecodeString(b64); err == nil {
+		return string(decoded), nil
+	}
+	if decoded, err := base64.URLEncoding.DecodeString(b64); err == nil {
+		return string(decoded), nil
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(b64)
+	if err != nil {
+		return "", err
+	}
+	return string(decoded), nil
+}
+
 func truncateForLog(value string, maxLen int) string {
 	if maxLen <= 0 || len(value) <= maxLen {
 		return value
@@ -361,6 +405,170 @@ func (l *EnterpriseWebviewLogin) Cancel() {
 			l.User.Log.Warn().Msg("Enterprise Teams webview login was canceled before cookie submission")
 		}
 	}
+}
+
+// TokenLogin handles the Consumer token input login flow (chat-based).
+type TokenLogin struct {
+	Main *TeamsConnector
+	User *bridgev2.User
+}
+
+var _ bridgev2.LoginProcessUserInput = (*TokenLogin)(nil)
+
+func (l *TokenLogin) Start(_ context.Context) (*bridgev2.LoginStep, error) {
+	if l != nil && l.User != nil {
+		l.User.Log.Info().Msg("Starting Teams token input login flow (Consumer)")
+	}
+	return &bridgev2.LoginStep{
+		Type:   bridgev2.LoginStepTypeUserInput,
+		StepID: LoginStepIDTokenInput,
+		Instructions: "Paste the base64-encoded refresh token from https://teams.live.com/v2.\n\n" +
+			"To obtain it, open the Teams web app in a browser, log in, then run the following in the browser's developer console (F12 → Console):\n\n" +
+			"  (()=>{for(let i=0;i<localStorage.length;i++){let k=localStorage.key(i);if(k.includes('-refreshtoken-')){let v=JSON.parse(localStorage.getItem(k));if(v.secret)return btoa(v.secret)}}return 'NOT FOUND'})()\n\n" +
+			"Copy the output (without quotes) and paste it here.",
+		UserInputParams: &bridgev2.LoginUserInputParams{
+			Fields: []bridgev2.LoginInputDataField{
+				{
+					Type:        bridgev2.LoginInputFieldTypeToken,
+					ID:          "refresh_token_b64",
+					Name:        "Refresh Token (base64)",
+					Description: "The base64-encoded MSAL refresh token from teams.live.com",
+				},
+			},
+		},
+	}, nil
+}
+
+func (l *TokenLogin) Cancel() {
+	if l != nil && l.User != nil {
+		l.User.Log.Warn().Msg("Teams token input login was canceled")
+	}
+}
+
+func (l *TokenLogin) SubmitUserInput(ctx context.Context, input map[string]string) (*bridgev2.LoginStep, error) {
+	if l == nil || l.Main == nil || l.User == nil {
+		return nil, errors.New("missing login state")
+	}
+	b64 := stripQuotes(strings.TrimSpace(input["refresh_token_b64"]))
+	if b64 == "" {
+		return nil, bridgev2.RespError{ErrCode: "FI.MAU.TEAMS_MISSING_TOKEN", Err: "Missing refresh token", StatusCode: http.StatusBadRequest}
+	}
+	refreshToken, err := decodeBase64Token(b64)
+	if err != nil {
+		return nil, bridgev2.RespError{ErrCode: "FI.MAU.TEAMS_INVALID_TOKEN", Err: "Invalid base64 encoding: " + err.Error(), StatusCode: http.StatusBadRequest}
+	}
+	l.User.Log.Info().Msg("Teams token input login received refresh token")
+	clientID := resolveClientID(l.Main, auth.AccountTypeConsumer)
+	meta, err := LoginFromRefreshToken(ctx, refreshToken, clientID)
+	if err != nil {
+		return nil, err
+	}
+	ul, err := l.User.NewLogin(ctx, &database.UserLogin{
+		ID:         networkid.UserLoginID(meta.TeamsUserID),
+		RemoteName: meta.TeamsUserID,
+		Metadata:   meta,
+	}, &bridgev2.NewLoginParams{DeleteOnConflict: true})
+	if err != nil {
+		return nil, err
+	}
+	startLoginConnect(ul, loginConnectBaseCtx(l.Main))
+	return &bridgev2.LoginStep{
+		Type:         bridgev2.LoginStepTypeComplete,
+		StepID:       "go.mau.teams.complete",
+		Instructions: "Login complete.",
+		CompleteParams: &bridgev2.LoginCompleteParams{
+			UserLoginID: ul.ID,
+			UserLogin:   ul,
+		},
+	}, nil
+}
+
+// EnterpriseTokenLogin handles the Enterprise (Work/School) token input login flow (chat-based).
+type EnterpriseTokenLogin struct {
+	Main *TeamsConnector
+	User *bridgev2.User
+}
+
+var _ bridgev2.LoginProcessUserInput = (*EnterpriseTokenLogin)(nil)
+
+func (l *EnterpriseTokenLogin) Start(_ context.Context) (*bridgev2.LoginStep, error) {
+	if l != nil && l.User != nil {
+		l.User.Log.Info().Msg("Starting Enterprise Teams token input login flow")
+	}
+	return &bridgev2.LoginStep{
+		Type:   bridgev2.LoginStepTypeUserInput,
+		StepID: LoginStepIDEnterpriseTokenInput,
+		Instructions: "Paste the base64-encoded refresh token and tenant ID from https://teams.microsoft.com.\n\n" +
+			"To obtain them, open the Teams web app in a browser, log in with your Work/School account, then run the following in the browser's developer console (F12 → Console):\n\n" +
+			"Refresh token (base64):\n" +
+			"  (()=>{for(let i=0;i<localStorage.length;i++){let k=localStorage.key(i);if(k.includes('-refreshtoken-')){let v=JSON.parse(localStorage.getItem(k));if(v.secret)return btoa(v.secret)}}return 'NOT FOUND'})()\n\n" +
+			"Tenant ID:\n" +
+			"  (()=>{for(let i=0;i<localStorage.length;i++){let k=localStorage.key(i);if(k.includes('login.windows.net')&&!k.includes('token')){let v=JSON.parse(localStorage.getItem(k));if(v.realm&&v.realm!=='9188040d-6c67-4c5b-b112-36a304b66dad')return v.realm}}return 'NOT FOUND'})()",
+		UserInputParams: &bridgev2.LoginUserInputParams{
+			Fields: []bridgev2.LoginInputDataField{
+				{
+					Type:        bridgev2.LoginInputFieldTypeToken,
+					ID:          "refresh_token_b64",
+					Name:        "Refresh Token (base64)",
+					Description: "The base64-encoded MSAL refresh token from teams.microsoft.com",
+				},
+				{
+					Type:        bridgev2.LoginInputFieldTypeToken,
+					ID:          "tenant_id",
+					Name:        "Tenant ID",
+					Description: "The Azure AD tenant ID (UUID format)",
+				},
+			},
+		},
+	}, nil
+}
+
+func (l *EnterpriseTokenLogin) Cancel() {
+	if l != nil && l.User != nil {
+		l.User.Log.Warn().Msg("Enterprise Teams token input login was canceled")
+	}
+}
+
+func (l *EnterpriseTokenLogin) SubmitUserInput(ctx context.Context, input map[string]string) (*bridgev2.LoginStep, error) {
+	if l == nil || l.Main == nil || l.User == nil {
+		return nil, errors.New("missing login state")
+	}
+	b64 := stripQuotes(strings.TrimSpace(input["refresh_token_b64"]))
+	if b64 == "" {
+		return nil, bridgev2.RespError{ErrCode: "FI.MAU.TEAMS_MISSING_TOKEN", Err: "Missing refresh token", StatusCode: http.StatusBadRequest}
+	}
+	refreshToken, err := decodeBase64Token(b64)
+	if err != nil {
+		return nil, bridgev2.RespError{ErrCode: "FI.MAU.TEAMS_INVALID_TOKEN", Err: "Invalid base64 encoding: " + err.Error(), StatusCode: http.StatusBadRequest}
+	}
+	tenantID := strings.TrimSpace(input["tenant_id"])
+	if tenantID == "" {
+		return nil, bridgev2.RespError{ErrCode: "FI.MAU.TEAMS_MISSING_TENANT_ID", Err: "Missing tenant ID", StatusCode: http.StatusBadRequest}
+	}
+	l.User.Log.Info().Str("tenant_id", tenantID).Msg("Enterprise Teams token input login received refresh token")
+	clientID := resolveClientID(l.Main, auth.AccountTypeEnterprise)
+	meta, err := EnterpriseLoginFromRefreshToken(ctx, refreshToken, tenantID, clientID)
+	if err != nil {
+		return nil, err
+	}
+	ul, err := l.User.NewLogin(ctx, &database.UserLogin{
+		ID:         networkid.UserLoginID(meta.TeamsUserID),
+		RemoteName: meta.TeamsUserID,
+		Metadata:   meta,
+	}, &bridgev2.NewLoginParams{DeleteOnConflict: true})
+	if err != nil {
+		return nil, err
+	}
+	startLoginConnect(ul, loginConnectBaseCtx(l.Main))
+	return &bridgev2.LoginStep{
+		Type:         bridgev2.LoginStepTypeComplete,
+		StepID:       "go.mau.teams.complete",
+		Instructions: "Login complete.",
+		CompleteParams: &bridgev2.LoginCompleteParams{
+			UserLoginID: ul.ID,
+			UserLogin:   ul,
+		},
+	}, nil
 }
 
 func (l *EnterpriseWebviewLogin) SubmitCookies(ctx context.Context, cookies map[string]string) (*bridgev2.LoginStep, error) {

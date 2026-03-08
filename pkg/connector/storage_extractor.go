@@ -250,6 +250,120 @@ func resolveClientID(main *TeamsConnector, accountType auth.AccountType) string 
 	return auth.DefaultClientID
 }
 
+// LoginFromRefreshToken bootstraps a full login using only a refresh token (Consumer flow).
+func LoginFromRefreshToken(ctx context.Context, refreshToken, clientID string) (*teamsid.UserLoginMetadata, error) {
+	return loginFromRefreshToken(ctx, refreshToken, clientID, auth.AccountTypeConsumer)
+}
+
+// EnterpriseLoginFromRefreshToken bootstraps a full login using a refresh token and tenant ID (Enterprise flow).
+func EnterpriseLoginFromRefreshToken(ctx context.Context, refreshToken, tenantID, clientID string) (*teamsid.UserLoginMetadata, error) {
+	return loginFromRefreshToken(ctx, refreshToken, clientID, auth.AccountTypeEnterprise, tenantID)
+}
+
+func loginFromRefreshToken(ctx context.Context, refreshToken, clientID string, accountType auth.AccountType, optTenantID ...string) (*teamsid.UserLoginMetadata, error) {
+	isEnterprise := accountType == auth.AccountTypeEnterprise
+
+	var authClient *auth.Client
+	tenantID := ""
+	if len(optTenantID) > 0 {
+		tenantID = optTenantID[0]
+	}
+	if isEnterprise {
+		if tenantID == "" {
+			return nil, bridgev2.RespError{ErrCode: "FI.MAU.TEAMS_MISSING_TENANT_ID", Err: "Tenant ID is required for enterprise login", StatusCode: http.StatusBadRequest}
+		}
+		authClient = newEnterpriseAuthClient(tenantID, nil)
+	} else {
+		authClient = newAuthClient(nil)
+		if id := strings.TrimSpace(clientID); id != "" {
+			authClient.ClientID = id
+		}
+	}
+
+	// Refresh access token from refresh token.
+	var refreshed *auth.AuthState
+	var refreshErr error
+	if isEnterprise {
+		refreshed, refreshErr = refreshAccessTokenForEnterpriseScope(ctx, authClient, refreshToken)
+	} else {
+		refreshed, refreshErr = refreshAccessTokenForSkypeScope(ctx, authClient, refreshToken)
+	}
+	if refreshErr != nil {
+		return nil, bridgev2.RespError{ErrCode: "FI.MAU.TEAMS_REFRESH_FAILED", Err: fmt.Sprintf("Failed to refresh access token: %v", refreshErr), StatusCode: http.StatusBadRequest}
+	}
+	accessToken := strings.TrimSpace(refreshed.AccessToken)
+	if accessToken == "" {
+		return nil, bridgev2.RespError{ErrCode: "FI.MAU.TEAMS_MISSING_ACCESS_TOKEN", Err: "Access token missing after refresh", StatusCode: http.StatusBadRequest}
+	}
+
+	// Update refresh token if a new one was returned.
+	currentRefreshToken := refreshToken
+	if rt := strings.TrimSpace(refreshed.RefreshToken); rt != "" {
+		currentRefreshToken = rt
+	}
+
+	meta := &teamsid.UserLoginMetadata{
+		RefreshToken:         currentRefreshToken,
+		AccessTokenExpiresAt: refreshed.ExpiresAtUnix,
+		GraphAccessToken:     strings.TrimSpace(refreshed.GraphAccessToken),
+		GraphExpiresAt:       refreshed.GraphExpiresAt,
+	}
+
+	// Try to obtain Graph token for consumer if not already present.
+	if !isEnterprise && strings.TrimSpace(meta.GraphAccessToken) == "" {
+		graphState, graphErr := refreshAccessTokenForGraphScope(ctx, authClient, currentRefreshToken)
+		if graphErr == nil {
+			if token := strings.TrimSpace(graphState.GraphAccessToken); token != "" {
+				meta.GraphAccessToken = token
+				meta.GraphExpiresAt = graphState.GraphExpiresAt
+			}
+			if rt := strings.TrimSpace(graphState.RefreshToken); rt != "" {
+				meta.RefreshToken = rt
+			}
+		}
+	}
+
+	if isEnterprise {
+		token, expiresAt, regionGTMs, err := authClient.AcquireEnterpriseSkypeToken(ctx, accessToken)
+		if err != nil {
+			return nil, bridgev2.RespError{ErrCode: "FI.MAU.TEAMS_SKYPETOKEN_FAILED", Err: fmt.Sprintf("Failed to acquire enterprise skypetoken: %v", err), StatusCode: http.StatusBadRequest}
+		}
+		meta.SkypeToken = token
+		meta.SkypeTokenExpiresAt = expiresAt
+		meta.AccountType = string(auth.AccountTypeEnterprise)
+		meta.TenantID = tenantID
+
+		if regionGTMs != nil {
+			gtms := auth.ParseRegionGTMs(regionGTMs)
+			if gtms != nil && gtms.ChatService != "" {
+				meta.ChatService = gtms.ChatService
+			}
+		}
+
+		teamsUserID := auth.NormalizeTeamsUserID(extractUserIDFromSkypeToken(token))
+		if teamsUserID == "" {
+			return nil, bridgev2.RespError{ErrCode: "FI.MAU.TEAMS_MISSING_USER_ID", Err: "Teams user ID missing from enterprise skypetoken", StatusCode: http.StatusBadRequest}
+		}
+		meta.TeamsUserID = teamsUserID
+	} else {
+		token, expiresAt, skypeID, err := authClient.AcquireSkypeToken(ctx, accessToken)
+		if err != nil {
+			return nil, bridgev2.RespError{ErrCode: "FI.MAU.TEAMS_SKYPETOKEN_FAILED", Err: fmt.Sprintf("Failed to acquire skypetoken: %v", err), StatusCode: http.StatusBadRequest}
+		}
+		meta.SkypeToken = token
+		meta.SkypeTokenExpiresAt = expiresAt
+		meta.AccountType = string(auth.AccountTypeConsumer)
+
+		teamsUserID := auth.NormalizeTeamsUserID(skypeID)
+		if teamsUserID == "" {
+			return nil, bridgev2.RespError{ErrCode: "FI.MAU.TEAMS_MISSING_USER_ID", Err: "Teams user ID missing from skypetoken response", StatusCode: http.StatusBadRequest}
+		}
+		meta.TeamsUserID = teamsUserID
+	}
+
+	return meta, nil
+}
+
 func decodeBase64Segment(seg string) []byte {
 	// JWT uses raw URL encoding without padding.
 	data, err := base64.RawURLEncoding.DecodeString(seg)
