@@ -40,6 +40,10 @@ type UserLoginMetadata struct {
 	GraphAccessToken    string `json:"graph_access_token,omitempty"`
 	GraphExpiresAt      int64  `json:"graph_expires_at,omitempty"`
 	TeamsUserID         string `json:"teams_user_id,omitempty"`
+
+	AccountType string `json:"account_type,omitempty"` // "consumer" or "enterprise"
+	TenantID    string `json:"tenant_id,omitempty"`
+	ChatService string `json:"chat_service,omitempty"` // Enterprise regionGTMs chatService URL
 }
 
 const graphTokenExpirySkew = 60 * time.Second

@@ -7,7 +7,7 @@ import (
 
 func TestExtractTokensFromMSALLocalStorage(t *testing.T) {
 	storage := map[string]string{
-		"msal.token.keys." + defaultClientID: `{"refreshToken":["rt"],"idToken":["idt"],"accessToken":["graph"]}`,
+		"msal.token.keys." + DefaultClientID: `{"refreshToken":["rt"],"idToken":["idt"],"accessToken":["graph"]}`,
 		"rt":                                 `{"secret":"refresh-secret","expiresOn":"1700000000"}`,
 		"idt":                                `{"secret":"id-secret"}`,
 		"graph":                              `{"secret":"graph-secret","expiresOn":"1700000200","target":"https://graph.microsoft.com/Files.ReadWrite User.Read"}`,
@@ -17,7 +17,7 @@ func TestExtractTokensFromMSALLocalStorage(t *testing.T) {
 		t.Fatalf("marshal failed: %v", err)
 	}
 
-	state, err := ExtractTokensFromMSALLocalStorage(string(payload), defaultClientID)
+	state, err := ExtractTokensFromMSALLocalStorage(string(payload), DefaultClientID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -40,7 +40,7 @@ func TestExtractTokensFromMSALLocalStorage(t *testing.T) {
 
 func TestExtractTokensFromMSALLocalStorage_MSALVariantTokenKeys(t *testing.T) {
 	storage := map[string]string{
-		"msal." + defaultClientID + ".token.keys.tenant": `{"refreshToken":["rt"],"idToken":["idt"]}`,
+		"msal." + DefaultClientID + ".token.keys.tenant": `{"refreshToken":["rt"],"idToken":["idt"]}`,
 		"rt":  `{"secret":"refresh-secret","expiresOn":"1700000000"}`,
 		"idt": `{"secret":"id-secret"}`,
 	}
@@ -63,7 +63,7 @@ func TestExtractTokensFromMSALLocalStorage_MSALVariantTokenKeys(t *testing.T) {
 
 func TestExtractTokensFromMSALLocalStorage_MissingMBIAccessTokenIsNonFatal(t *testing.T) {
 	storage := map[string]string{
-		"msal.token.keys." + defaultClientID: `{"refreshToken":["rt"],"accessToken":["at"],"idToken":["idt"]}`,
+		"msal.token.keys." + DefaultClientID: `{"refreshToken":["rt"],"accessToken":["at"],"idToken":["idt"]}`,
 		"rt":                                 `{"secret":"refresh-secret","expiresOn":"1700000000"}`,
 		"at":                                 `{"secret":"token-openid","expiresOn":"1700000100","target":"openid profile"}`,
 		"idt":                                `{"secret":"id-secret"}`,
@@ -73,7 +73,7 @@ func TestExtractTokensFromMSALLocalStorage_MissingMBIAccessTokenIsNonFatal(t *te
 		t.Fatalf("marshal failed: %v", err)
 	}
 
-	state, err := ExtractTokensFromMSALLocalStorage(string(payload), defaultClientID)
+	state, err := ExtractTokensFromMSALLocalStorage(string(payload), DefaultClientID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

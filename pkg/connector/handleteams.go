@@ -118,7 +118,16 @@ func (c *TeamsClient) ensureValidSkypeToken(ctx context.Context) error {
 		return errors.New("missing refresh token, re-login required")
 	}
 
-	authClient := auth.NewClient(nil)
+	isEnterprise := c.Meta.AccountType == string(auth.AccountTypeEnterprise)
+
+	if isEnterprise {
+		return c.ensureValidEnterpriseSkypeToken(ctx, refresh)
+	}
+	return c.ensureValidConsumerSkypeToken(ctx, refresh)
+}
+
+func (c *TeamsClient) ensureValidConsumerSkypeToken(ctx context.Context, refresh string) error {
+	authClient := newAuthClient(nil)
 	if c.Main != nil && strings.TrimSpace(c.Main.Config.ClientID) != "" {
 		authClient.ClientID = strings.TrimSpace(c.Main.Config.ClientID)
 	}
@@ -153,6 +162,47 @@ func (c *TeamsClient) ensureValidSkypeToken(ctx context.Context) error {
 
 	if err := c.Login.Save(ctx); err != nil {
 		c.Login.Log.Err(err).Msg("Failed to persist refreshed login metadata")
+	}
+	return nil
+}
+
+func (c *TeamsClient) ensureValidEnterpriseSkypeToken(ctx context.Context, refresh string) error {
+	authClient := newEnterpriseAuthClient(c.Meta.TenantID, nil)
+	state, err := refreshAccessTokenForEnterpriseScope(ctx, authClient, refresh)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(state.RefreshToken) != "" {
+		c.Meta.RefreshToken = strings.TrimSpace(state.RefreshToken)
+	}
+
+	skypeToken, skypeExpiresAt, regionGTMs, err := authClient.AcquireEnterpriseSkypeToken(ctx, state.AccessToken)
+	if err != nil {
+		return err
+	}
+
+	c.Meta.AccessTokenExpiresAt = state.ExpiresAtUnix
+	c.Meta.SkypeToken = skypeToken
+	c.Meta.SkypeTokenExpiresAt = skypeExpiresAt
+
+	// Update TeamsUserID from the refreshed Skype token to stay consistent.
+	if userID := auth.NormalizeTeamsUserID(extractUserIDFromSkypeToken(skypeToken)); userID != "" {
+		c.Meta.TeamsUserID = userID
+		c.Login.RemoteName = userID
+	}
+
+	// Update regionGTMs-derived fields if returned.
+	if regionGTMs != nil {
+		gtms := auth.ParseRegionGTMs(regionGTMs)
+		if gtms != nil && gtms.ChatService != "" {
+			c.Meta.ChatService = gtms.ChatService
+		} else {
+			c.Login.Log.Warn().Msg("Enterprise authz returned regionGTMs but chatService is empty")
+		}
+	}
+
+	if err := c.Login.Save(ctx); err != nil {
+		c.Login.Log.Err(err).Msg("Failed to persist refreshed enterprise login metadata")
 	}
 	return nil
 }

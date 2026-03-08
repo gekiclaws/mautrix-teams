@@ -192,10 +192,10 @@ func (c *Client) sendRichTextMessageWithID(ctx context.Context, threadID string,
 		return 0, errors.New("missing client message id")
 	}
 
-	if !strings.Contains(threadID, "@thread.v2") && c.Log != nil {
+	if !strings.Contains(threadID, "@thread.v2") && !strings.Contains(threadID, "@thread.tacv2") && c.Log != nil {
 		c.Log.Warn().
 			Str("thread_id", threadID).
-			Msg("teams thread id missing @thread.v2")
+			Msg("teams thread id missing @thread.v2 or @thread.tacv2")
 	}
 
 	baseURL := c.SendMessagesURL

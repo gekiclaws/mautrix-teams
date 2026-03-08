@@ -30,7 +30,7 @@ func TestExtractTeamsLoginMetadataFromLocalStorage_PersistsGraphToken(t *testing
 	}()
 
 	storage := map[string]string{
-		"msal.token.keys." + auth.NewClient(nil).ClientID: `{"refreshToken":["rt"],"idToken":["id"],"accessToken":["mbi","graph"]}`,
+		"msal.token.keys." + auth.DefaultClientID: `{"refreshToken":["rt"],"idToken":["id"],"accessToken":["mbi","graph"]}`,
 		"rt":    `{"secret":"refresh-token","expiresOn":"1700000000"}`,
 		"id":    `{"secret":"id-token"}`,
 		"mbi":   `{"secret":"mbi-access-token","expiresOn":"1700000100","target":"service::api.fl.spaces.skype.com::MBI_SSL"}`,
@@ -41,7 +41,7 @@ func TestExtractTeamsLoginMetadataFromLocalStorage_PersistsGraphToken(t *testing
 		t.Fatalf("marshal failed: %v", err)
 	}
 
-	meta, err := ExtractTeamsLoginMetadataFromLocalStorage(context.Background(), string(payload), auth.NewClient(nil).ClientID)
+	meta, err := ExtractTeamsLoginMetadataFromLocalStorage(context.Background(), string(payload), auth.DefaultClientID)
 	if err != nil {
 		t.Fatalf("unexpected extraction error: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestExtractTeamsLoginMetadataFromLocalStorage_NoGraphTokenStillSucceeds(t *
 	}()
 
 	storage := map[string]string{
-		"msal.token.keys." + auth.NewClient(nil).ClientID: `{"refreshToken":["rt"],"accessToken":["mbi"]}`,
+		"msal.token.keys." + auth.DefaultClientID: `{"refreshToken":["rt"],"accessToken":["mbi"]}`,
 		"rt":  `{"secret":"refresh-token","expiresOn":"1700000000"}`,
 		"mbi": `{"secret":"mbi-access-token","expiresOn":"1700000100","target":"service::api.fl.spaces.skype.com::MBI_SSL"}`,
 	}
@@ -85,7 +85,7 @@ func TestExtractTeamsLoginMetadataFromLocalStorage_NoGraphTokenStillSucceeds(t *
 		t.Fatalf("marshal failed: %v", err)
 	}
 
-	meta, err := ExtractTeamsLoginMetadataFromLocalStorage(context.Background(), string(payload), auth.NewClient(nil).ClientID)
+	meta, err := ExtractTeamsLoginMetadataFromLocalStorage(context.Background(), string(payload), auth.DefaultClientID)
 	if err != nil {
 		t.Fatalf("unexpected extraction error: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestExtractTeamsLoginMetadataFromLocalStorage_RefreshesGraphWhenMissingInSt
 	}()
 
 	storage := map[string]string{
-		"msal.token.keys." + auth.NewClient(nil).ClientID: `{"refreshToken":["rt"],"accessToken":["openid-only"]}`,
+		"msal.token.keys." + auth.DefaultClientID: `{"refreshToken":["rt"],"accessToken":["openid-only"]}`,
 		"rt":          `{"secret":"refresh-token","expiresOn":"1700000000"}`,
 		"openid-only": `{"secret":"openid-token","expiresOn":"1700000100","target":"openid profile"}`,
 	}
@@ -147,7 +147,7 @@ func TestExtractTeamsLoginMetadataFromLocalStorage_RefreshesGraphWhenMissingInSt
 		t.Fatalf("marshal failed: %v", err)
 	}
 
-	meta, err := ExtractTeamsLoginMetadataFromLocalStorage(context.Background(), string(payload), auth.NewClient(nil).ClientID)
+	meta, err := ExtractTeamsLoginMetadataFromLocalStorage(context.Background(), string(payload), auth.DefaultClientID)
 	if err != nil {
 		t.Fatalf("unexpected extraction error: %v", err)
 	}
@@ -162,5 +162,61 @@ func TestExtractTeamsLoginMetadataFromLocalStorage_RefreshesGraphWhenMissingInSt
 	}
 	if meta.SkypeToken != "skype-token" {
 		t.Fatalf("unexpected skype token: %s", meta.SkypeToken)
+	}
+}
+
+func TestResolveClientID_DefaultsByAccountType(t *testing.T) {
+	if got := resolveClientID(nil, auth.AccountTypeConsumer); got != auth.DefaultClientID {
+		t.Fatalf("unexpected consumer client id: %s", got)
+	}
+	if got := resolveClientID(nil, auth.AccountTypeEnterprise); got != auth.EnterpriseClientID {
+		t.Fatalf("unexpected enterprise client id: %s", got)
+	}
+}
+
+func TestResolveClientID_PrefersConfiguredClientID(t *testing.T) {
+	main := &TeamsConnector{Config: TeamsConfig{ClientID: "configured-client-id"}}
+	if got := resolveClientID(main, auth.AccountTypeConsumer); got != "configured-client-id" {
+		t.Fatalf("unexpected consumer configured client id: %s", got)
+	}
+	// Enterprise always uses the fixed enterprise client ID, ignoring operator config.
+	if got := resolveClientID(main, auth.AccountTypeEnterprise); got != auth.EnterpriseClientID {
+		t.Fatalf("unexpected enterprise client id: %s", got)
+	}
+}
+
+func TestRefreshAccessTokenForEnterpriseScope_FallbackOnPrimaryFailure(t *testing.T) {
+	var receivedScopes []string
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		scope := r.Form.Get("scope")
+		receivedScopes = append(receivedScopes, scope)
+
+		switch scope {
+		case "https://api.spaces.skype.com/.default offline_access":
+			w.WriteHeader(http.StatusBadRequest)
+		case "openid profile offline_access https://api.spaces.skype.com/.default":
+			_, _ = w.Write([]byte(`{"access_token":"enterprise-access","refresh_token":"refresh-updated","expires_in":3600}`))
+		default:
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer tokenServer.Close()
+
+	client := auth.NewEnterpriseClient("common", nil)
+	client.TokenEndpoint = tokenServer.URL
+
+	state, err := refreshAccessTokenForEnterpriseScope(context.Background(), client, "refresh-token")
+	if err != nil {
+		t.Fatalf("unexpected refresh error: %v", err)
+	}
+	if state.AccessToken != "enterprise-access" {
+		t.Fatalf("unexpected access token: %s", state.AccessToken)
+	}
+	if len(receivedScopes) < 2 {
+		t.Fatalf("expected primary and fallback refresh attempts, got %d", len(receivedScopes))
 	}
 }

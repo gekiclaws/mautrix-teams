@@ -19,11 +19,13 @@ var defaultAllowedHosts = map[string]struct{}{
 	"login.live.com":            {},
 	"login.microsoftonline.com": {},
 	"teams.live.com":            {},
+	"teams.microsoft.com":       {},
 }
 
 var defaultAllowedSuffixes = []string{
 	".skype.com",
 	".teams.live.com",
+	".teams.microsoft.com",
 }
 
 type CookieStore struct {

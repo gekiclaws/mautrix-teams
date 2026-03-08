@@ -1,6 +1,9 @@
 package auth
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func TestSelectMBIAccessToken(t *testing.T) {
 	storage := map[string]string{
@@ -57,5 +60,40 @@ func TestSelectMBIAccessTokenMissing(t *testing.T) {
 	token, expiry := selectMBIAccessToken(storage, keys)
 	if token != "" || expiry != 0 {
 		t.Fatalf("expected no token, got %q with expiry %d", token, expiry)
+	}
+}
+
+func TestExtractTenantIDFromMSALStorage_PrefersMatchingHomeAccount(t *testing.T) {
+	storage := map[string]string{
+		"uid1.tid-one-login.windows.net-account-client--": `{"realm":"tid-one","home_account_id":"uid1.tid-one"}`,
+		"uid2.tid-two-login.windows.net-account-client--": `{"realm":"tid-two","home_account_id":"uid2.tid-two"}`,
+	}
+
+	tenantID := extractTenantIDFromMSALStorage(storage, "uid2.tid-two")
+	if tenantID != "tid-two" {
+		t.Fatalf("unexpected tenant id: %s", tenantID)
+	}
+}
+
+func TestExtractTokensFromMSALLocalStorage_BindsTenantToSelectedTokenAccount(t *testing.T) {
+	const clientID = "test-client-id"
+	refreshKey := "uid2.tid-two-login.windows.net-refreshtoken-test-client-id--"
+	storage := map[string]string{
+		"msal.token.keys." + clientID: `{"refreshToken":["` + refreshKey + `"],"accessToken":[]}`,
+		refreshKey:                    `{"secret":"refresh-token","expiresOn":"1700000000"}`,
+		"uid1.tid-one-login.windows.net-account-test-client-id--": `{"realm":"tid-one","home_account_id":"uid1.tid-one"}`,
+		"uid2.tid-two-login.windows.net-account-test-client-id--": `{"realm":"tid-two","home_account_id":"uid2.tid-two"}`,
+	}
+	payload, err := json.Marshal(storage)
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+
+	state, err := ExtractTokensFromMSALLocalStorage(string(payload), clientID)
+	if err != nil {
+		t.Fatalf("unexpected extraction error: %v", err)
+	}
+	if state.TenantID != "tid-two" {
+		t.Fatalf("unexpected tenant id: %s", state.TenantID)
 	}
 }

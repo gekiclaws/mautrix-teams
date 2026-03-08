@@ -220,7 +220,12 @@ func (c *TeamsClient) getConsumerHTTP() *http.Client {
 	if c.consumerHTTP != nil {
 		return c.consumerHTTP
 	}
-	authClient := auth.NewClient(nil)
+	var authClient *auth.Client
+	if c.Meta != nil && c.Meta.AccountType == string(auth.AccountTypeEnterprise) {
+		authClient = auth.NewEnterpriseClient(c.Meta.TenantID, nil)
+	} else {
+		authClient = auth.NewClient(nil)
+	}
 	c.consumerHTTP = authClient.HTTP
 	return c.consumerHTTP
 }
@@ -239,6 +244,14 @@ func (c *TeamsClient) newConsumer() *consumerclient.Client {
 	}
 	if c.Meta != nil {
 		consumer.Token = c.Meta.SkypeToken
+		// Enterprise accounts use region-specific service endpoints from regionGTMs.
+		if c.Meta.ChatService != "" {
+			chatSvc := strings.TrimSuffix(c.Meta.ChatService, "/")
+			consumer.ConversationsURL = chatSvc + "/v1/users/ME/conversations"
+			consumer.MessagesURL = chatSvc + "/v1/users/ME/conversations"
+			consumer.SendMessagesURL = chatSvc + "/v1/users/ME/conversations"
+			consumer.ConsumptionHorizonsURL = chatSvc + "/v1/threads"
+		}
 	}
 	return consumer
 }

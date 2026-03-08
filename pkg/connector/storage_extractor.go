@@ -2,6 +2,8 @@ package connector
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -13,28 +15,55 @@ import (
 )
 
 const mbiRefreshScope = "service::api.fl.spaces.skype.com::MBI_SSL"
+const enterpriseRefreshScope = "https://api.spaces.skype.com/.default"
 const graphFilesReadWriteScope = "https://graph.microsoft.com/Files.ReadWrite"
 
 var newAuthClient = auth.NewClient
+var newEnterpriseAuthClient = auth.NewEnterpriseClient
 
 // ExtractTeamsLoginMetadataFromLocalStorage parses the MSAL localStorage payload
-// and exchanges its access token for a Teams skypetoken.
+// and exchanges its access token for a Teams skypetoken (Consumer flow).
 func ExtractTeamsLoginMetadataFromLocalStorage(ctx context.Context, rawStorage, clientID string) (*teamsid.UserLoginMetadata, error) {
+	return extractTeamsLoginMetadata(ctx, rawStorage, clientID, auth.AccountTypeConsumer)
+}
+
+// ExtractEnterpriseTeamsLoginMetadataFromLocalStorage parses the MSAL localStorage payload
+// for an Enterprise (Work/School) account and exchanges its access token for a Teams skypetoken.
+func ExtractEnterpriseTeamsLoginMetadataFromLocalStorage(ctx context.Context, rawStorage, clientID string) (*teamsid.UserLoginMetadata, error) {
+	return extractTeamsLoginMetadata(ctx, rawStorage, clientID, auth.AccountTypeEnterprise)
+}
+
+func extractTeamsLoginMetadata(ctx context.Context, rawStorage, clientID string, accountType auth.AccountType) (*teamsid.UserLoginMetadata, error) {
 	state, err := auth.ExtractTokensFromMSALLocalStorage(rawStorage, clientID)
 	if err != nil {
 		return nil, bridgev2.RespError{ErrCode: "FI.MAU.TEAMS_INVALID_STORAGE", Err: fmt.Sprintf("Failed to extract tokens: %v", err), StatusCode: http.StatusBadRequest}
 	}
-	authClient := newAuthClient(nil)
-	if id := strings.TrimSpace(clientID); id != "" {
-		authClient.ClientID = id
+
+	isEnterprise := accountType == auth.AccountTypeEnterprise
+
+	var authClient *auth.Client
+	if isEnterprise {
+		authClient = newEnterpriseAuthClient(state.TenantID, nil)
+	} else {
+		authClient = newAuthClient(nil)
+		if id := strings.TrimSpace(clientID); id != "" {
+			authClient.ClientID = id
+		}
 	}
+
 	accessToken := strings.TrimSpace(state.AccessToken)
 	if accessToken == "" {
 		refreshToken := strings.TrimSpace(state.RefreshToken)
 		if refreshToken == "" {
 			return nil, bridgev2.RespError{ErrCode: "FI.MAU.TEAMS_MISSING_ACCESS_TOKEN", Err: "Access token missing from extracted state", StatusCode: http.StatusBadRequest}
 		}
-		refreshed, refreshErr := refreshAccessTokenForSkypeScope(ctx, authClient, refreshToken)
+		var refreshed *auth.AuthState
+		var refreshErr error
+		if isEnterprise {
+			refreshed, refreshErr = refreshAccessTokenForEnterpriseScope(ctx, authClient, refreshToken)
+		} else {
+			refreshed, refreshErr = refreshAccessTokenForSkypeScope(ctx, authClient, refreshToken)
+		}
 		if refreshErr != nil {
 			return nil, bridgev2.RespError{ErrCode: "FI.MAU.TEAMS_MISSING_ACCESS_TOKEN", Err: fmt.Sprintf("Access token missing from localStorage and refresh failed: %v", refreshErr), StatusCode: http.StatusBadRequest}
 		}
@@ -53,7 +82,9 @@ func ExtractTeamsLoginMetadataFromLocalStorage(ctx context.Context, rawStorage, 
 			state.GraphExpiresAt = refreshed.GraphExpiresAt
 		}
 	}
-	if strings.TrimSpace(state.GraphAccessToken) == "" {
+
+	// For Consumer, also try to obtain a Graph access token if not already present.
+	if !isEnterprise && strings.TrimSpace(state.GraphAccessToken) == "" {
 		refreshToken := strings.TrimSpace(state.RefreshToken)
 		if refreshToken != "" {
 			graphState, graphErr := refreshAccessTokenForGraphScope(ctx, authClient, refreshToken)
@@ -69,25 +100,84 @@ func ExtractTeamsLoginMetadataFromLocalStorage(ctx context.Context, rawStorage, 
 		}
 	}
 
-	token, expiresAt, skypeID, err := authClient.AcquireSkypeToken(ctx, accessToken)
-	if err != nil {
-		return nil, bridgev2.RespError{ErrCode: "FI.MAU.TEAMS_SKYPETOKEN_FAILED", Err: fmt.Sprintf("Failed to acquire skypetoken: %v", err), StatusCode: http.StatusBadRequest}
-	}
-
-	teamsUserID := auth.NormalizeTeamsUserID(skypeID)
-	if teamsUserID == "" {
-		return nil, bridgev2.RespError{ErrCode: "FI.MAU.TEAMS_MISSING_USER_ID", Err: "Teams user ID missing from skypetoken response", StatusCode: http.StatusBadRequest}
-	}
-
-	return &teamsid.UserLoginMetadata{
+	meta := &teamsid.UserLoginMetadata{
 		RefreshToken:         state.RefreshToken,
 		AccessTokenExpiresAt: state.ExpiresAtUnix,
-		SkypeToken:           token,
-		SkypeTokenExpiresAt:  expiresAt,
 		GraphAccessToken:     strings.TrimSpace(state.GraphAccessToken),
 		GraphExpiresAt:       state.GraphExpiresAt,
-		TeamsUserID:          teamsUserID,
-	}, nil
+	}
+
+	if isEnterprise {
+		token, expiresAt, regionGTMs, err := authClient.AcquireEnterpriseSkypeToken(ctx, accessToken)
+		if err != nil {
+			return nil, bridgev2.RespError{ErrCode: "FI.MAU.TEAMS_SKYPETOKEN_FAILED", Err: fmt.Sprintf("Failed to acquire enterprise skypetoken: %v", err), StatusCode: http.StatusBadRequest}
+		}
+		meta.SkypeToken = token
+		meta.SkypeTokenExpiresAt = expiresAt
+		meta.AccountType = string(auth.AccountTypeEnterprise)
+		meta.TenantID = state.TenantID
+
+		if regionGTMs != nil {
+			gtms := auth.ParseRegionGTMs(regionGTMs)
+			if gtms != nil && gtms.ChatService != "" {
+				meta.ChatService = gtms.ChatService
+			}
+		}
+
+		// Enterprise authz doesn't return a skypeID in the same way as Consumer.
+		// Extract user ID from the Skype token JWT's skypeid or oid claim.
+		teamsUserID := auth.NormalizeTeamsUserID(extractUserIDFromSkypeToken(token))
+		if teamsUserID == "" {
+			return nil, bridgev2.RespError{ErrCode: "FI.MAU.TEAMS_MISSING_USER_ID", Err: "Teams user ID missing from enterprise skypetoken", StatusCode: http.StatusBadRequest}
+		}
+		meta.TeamsUserID = teamsUserID
+	} else {
+		token, expiresAt, skypeID, err := authClient.AcquireSkypeToken(ctx, accessToken)
+		if err != nil {
+			return nil, bridgev2.RespError{ErrCode: "FI.MAU.TEAMS_SKYPETOKEN_FAILED", Err: fmt.Sprintf("Failed to acquire skypetoken: %v", err), StatusCode: http.StatusBadRequest}
+		}
+		meta.SkypeToken = token
+		meta.SkypeTokenExpiresAt = expiresAt
+		meta.AccountType = string(auth.AccountTypeConsumer)
+
+		teamsUserID := auth.NormalizeTeamsUserID(skypeID)
+		if teamsUserID == "" {
+			return nil, bridgev2.RespError{ErrCode: "FI.MAU.TEAMS_MISSING_USER_ID", Err: "Teams user ID missing from skypetoken response", StatusCode: http.StatusBadRequest}
+		}
+		meta.TeamsUserID = teamsUserID
+	}
+
+	return meta, nil
+}
+
+// extractUserIDFromSkypeToken attempts to extract the user identifier from a Skype JWT token.
+// Enterprise Skype tokens are JWTs; the "skypeid" or "oid" claim contains the user ID.
+func extractUserIDFromSkypeToken(token string) string {
+	parts := strings.SplitN(token, ".", 3)
+	if len(parts) < 2 {
+		return ""
+	}
+	// Try standard base64 then raw URL encoding.
+	payload := decodeBase64Segment(parts[1])
+	if payload == nil {
+		return ""
+	}
+	// Look for skypeid first, then oid.
+	type jwtClaims struct {
+		SkypeID string `json:"skypeid"`
+		OID     string `json:"oid"`
+	}
+	var claims jwtClaims
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return ""
+	}
+	if claims.SkypeID != "" {
+		return claims.SkypeID
+	}
+	if claims.OID != "" {
+		return "8:orgid:" + claims.OID
+	}
+	return ""
 }
 
 func refreshAccessTokenForSkypeScope(ctx context.Context, client *auth.Client, refreshToken string) (*auth.AuthState, error) {
@@ -110,6 +200,25 @@ func refreshAccessTokenForSkypeScope(ctx context.Context, client *auth.Client, r
 	return nil, fmt.Errorf("MBI scope refresh failed (%v); default scopes failed (%v)", err, fallbackErr)
 }
 
+func refreshAccessTokenForEnterpriseScope(ctx context.Context, client *auth.Client, refreshToken string) (*auth.AuthState, error) {
+	retryClient := *client
+	retryClient.Scopes = []string{enterpriseRefreshScope, "offline_access"}
+	refreshed, err := retryClient.RefreshAccessToken(ctx, refreshToken)
+	if err == nil {
+		return refreshed, nil
+	}
+
+	// Fallback to default Enterprise scopes.
+	fallbackClient := *client
+	fallbackClient.Scopes = []string{"openid", "profile", "offline_access", enterpriseRefreshScope}
+	refreshed, fallbackErr := fallbackClient.RefreshAccessToken(ctx, refreshToken)
+	if fallbackErr == nil {
+		return refreshed, nil
+	}
+
+	return nil, fmt.Errorf("enterprise scope refresh failed (%v); fallback scopes failed (%v)", err, fallbackErr)
+}
+
 func refreshAccessTokenForGraphScope(ctx context.Context, client *auth.Client, refreshToken string) (*auth.AuthState, error) {
 	retryClient := *client
 	retryClient.Scopes = []string{graphFilesReadWriteScope, "offline_access"}
@@ -128,11 +237,29 @@ func refreshAccessTokenForGraphScope(ctx context.Context, client *auth.Client, r
 	return nil, fmt.Errorf("graph scope refresh failed (%v); fallback scopes failed (%v)", err, fallbackErr)
 }
 
-func resolveClientID(main *TeamsConnector) string {
+func resolveClientID(main *TeamsConnector, accountType auth.AccountType) string {
+	if accountType == auth.AccountTypeEnterprise {
+		// Enterprise uses a fixed client ID; operator-configured ClientID is for Consumer only.
+		return auth.EnterpriseClientID
+	}
 	if main != nil {
 		if id := strings.TrimSpace(main.Config.ClientID); id != "" {
 			return id
 		}
 	}
-	return auth.NewClient(nil).ClientID
+	return auth.DefaultClientID
+}
+
+func decodeBase64Segment(seg string) []byte {
+	// JWT uses raw URL encoding without padding.
+	data, err := base64.RawURLEncoding.DecodeString(seg)
+	if err == nil {
+		return data
+	}
+	// Fallback: try standard encoding with padding.
+	data, err = base64.StdEncoding.DecodeString(seg)
+	if err == nil {
+		return data
+	}
+	return nil
 }

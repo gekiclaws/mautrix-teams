@@ -60,12 +60,30 @@ func ExtractTokensFromMSALLocalStorage(raw string, clientID string) (*AuthState,
 		}
 	}
 
+	// Extract tenant ID from the account that matches the selected token keys.
+	homeAccountID := extractHomeAccountIDFromMSALCredentialKeys(keys.RefreshToken)
+	if homeAccountID == "" {
+		homeAccountID = extractHomeAccountIDFromMSALCredentialKeys(keys.AccessToken)
+	}
+	state.TenantID = extractTenantIDFromMSALStorage(storage, homeAccountID)
+
 	if len(keys.AccessToken) > 0 {
 		accessToken, expiresAt := selectMBIAccessToken(storage, keys.AccessToken)
 		if accessToken != "" {
 			state.AccessToken = accessToken
 			if expiresAt != 0 {
 				state.ExpiresAtUnix = expiresAt
+			}
+		}
+		// If no Consumer MBI token found, try Enterprise scope pattern as fallback.
+		if state.AccessToken == "" {
+			enterpriseToken, enterpriseExpiry := selectEnterpriseAccessToken(storage, keys.AccessToken)
+			if enterpriseToken != "" {
+				state.AccessToken = enterpriseToken
+				state.AccountType = string(AccountTypeEnterprise)
+				if enterpriseExpiry != 0 {
+					state.ExpiresAtUnix = enterpriseExpiry
+				}
 			}
 		}
 		graphAccessToken, graphExpiresAt := selectGraphAccessToken(storage, keys.AccessToken)
@@ -90,6 +108,7 @@ func ExtractTokensFromMSALLocalStorage(raw string, clientID string) (*AuthState,
 }
 
 const mbiAccessTokenMarker = "service::api.fl.spaces.skype.com::mbi_ssl"
+const enterpriseAccessTokenMarker = "api.spaces.skype.com"
 
 func selectMBIAccessToken(storage map[string]string, keys []string) (string, int64) {
 	var bestToken string
@@ -121,6 +140,38 @@ func matchesMBITarget(target string) bool {
 	}
 	lower := strings.ToLower(target)
 	return strings.Contains(lower, mbiAccessTokenMarker)
+}
+
+func selectEnterpriseAccessToken(storage map[string]string, keys []string) (string, int64) {
+	var bestToken string
+	var bestExpiry int64
+	for _, key := range keys {
+		raw, ok := storage[key]
+		if !ok || raw == "" {
+			continue
+		}
+		var entry msalTokenEntry
+		if err := json.Unmarshal([]byte(raw), &entry); err != nil {
+			continue
+		}
+		if entry.Secret == "" || !matchesEnterpriseTarget(entry.Target) {
+			continue
+		}
+		expiry, _ := parseMSALExpires(entry.ExpiresOn)
+		if bestToken == "" || expiry > bestExpiry {
+			bestToken = entry.Secret
+			bestExpiry = expiry
+		}
+	}
+	return bestToken, bestExpiry
+}
+
+func matchesEnterpriseTarget(target string) bool {
+	if target == "" {
+		return false
+	}
+	lower := strings.ToLower(target)
+	return strings.Contains(lower, enterpriseAccessTokenMarker) && !strings.Contains(lower, mbiAccessTokenMarker)
 }
 
 func selectGraphAccessToken(storage map[string]string, keys []string) (string, int64) {
@@ -208,6 +259,86 @@ func findMSALKeys(storage map[string]string, clientID string) (string, error) {
 		}
 	}
 	return "", errors.New("msal token keys entry not found")
+}
+
+// extractTenantIDFromMSALStorage scans MSAL account entries in localStorage for the tenant ID.
+// MSAL account keys follow the pattern "<uid>.<tenantid>-login.windows.net-..." and account
+// entries contain a "realm" field with the tenant ID.
+func extractTenantIDFromMSALStorage(storage map[string]string, preferredHomeAccountID string) string {
+	preferredHomeAccountID = strings.ToLower(strings.TrimSpace(preferredHomeAccountID))
+	var fallbackTenantID string
+
+	for key, val := range storage {
+		// Account entry keys contain "login.windows.net" or "login.microsoftonline.com".
+		lowerKey := strings.ToLower(key)
+		if !strings.Contains(lowerKey, "login.windows.net") && !strings.Contains(lowerKey, "login.microsoftonline.com") {
+			continue
+		}
+		// Skip token keys (they contain "-accesstoken-", "-refreshtoken-", "-idtoken-").
+		if strings.Contains(lowerKey, "token") {
+			continue
+		}
+		var account struct {
+			Realm         string `json:"realm"`
+			HomeAccountID string `json:"home_account_id"`
+		}
+		if err := json.Unmarshal([]byte(val), &account); err != nil {
+			continue
+		}
+		accountHomeID := strings.ToLower(strings.TrimSpace(account.HomeAccountID))
+		if accountHomeID == "" {
+			accountHomeID = strings.ToLower(extractHomeAccountIDFromMSALKey(key))
+		}
+		tenantID := strings.TrimSpace(account.Realm)
+		if tenantID == "" {
+			tenantID = tenantIDFromHomeAccountID(accountHomeID)
+		}
+		if tenantID == "" {
+			continue
+		}
+		if preferredHomeAccountID != "" && accountHomeID == preferredHomeAccountID {
+			return tenantID
+		}
+		if fallbackTenantID == "" {
+			fallbackTenantID = tenantID
+		}
+	}
+	return fallbackTenantID
+}
+
+func extractHomeAccountIDFromMSALCredentialKeys(keys []string) string {
+	for _, key := range keys {
+		if homeAccountID := extractHomeAccountIDFromMSALKey(key); homeAccountID != "" {
+			return homeAccountID
+		}
+	}
+	return ""
+}
+
+func extractHomeAccountIDFromMSALKey(key string) string {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return ""
+	}
+	lowerKey := strings.ToLower(key)
+	for _, marker := range []string{"-login.windows.net-", "-login.microsoftonline.com-"} {
+		idx := strings.Index(lowerKey, marker)
+		if idx > 0 {
+			return key[:idx]
+		}
+	}
+	return ""
+}
+
+func tenantIDFromHomeAccountID(homeAccountID string) string {
+	if homeAccountID == "" {
+		return ""
+	}
+	parts := strings.SplitN(homeAccountID, ".", 2)
+	if len(parts) != 2 {
+		return ""
+	}
+	return strings.TrimSpace(parts[1])
 }
 
 func parseMSALExpires(value string) (int64, bool) {

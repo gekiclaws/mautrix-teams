@@ -23,6 +23,7 @@ func isLikelyThreadID(value string) bool {
 		return false
 	}
 	return strings.Contains(normalized, "@thread.v2") ||
+		strings.Contains(normalized, "@thread.tacv2") ||
 		strings.Contains(normalized, "@thread.skype") ||
 		strings.Contains(normalized, "@unq.gbl.spaces")
 }

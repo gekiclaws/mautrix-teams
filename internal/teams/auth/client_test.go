@@ -20,7 +20,7 @@ func TestAuthorizeURL(t *testing.T) {
 		t.Fatalf("Parse failed: %v", err)
 	}
 	q := parsed.Query()
-	if q.Get("client_id") != defaultClientID {
+	if q.Get("client_id") != DefaultClientID {
 		t.Fatalf("unexpected client_id: %s", q.Get("client_id"))
 	}
 	if q.Get("redirect_uri") != defaultRedirectURI {
