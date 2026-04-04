@@ -4,6 +4,8 @@ on: [push, pull_request]
 
 env:
   GOTOOLCHAIN: local
+  GOIMPORTS_VERSION: v0.42.0
+  STATICCHECK_VERSION: v0.6.1
 
 jobs:
   lint:
@@ -28,9 +30,9 @@ jobs:
 
       - name: Install dependencies
         run: |
-          go install golang.org/x/tools/cmd/goimports@latest
-          go install honnef.co/go/tools/cmd/staticcheck@latest
-          export PATH="$HOME/go/bin:$PATH"
+          go install golang.org/x/tools/cmd/goimports@${GOIMPORTS_VERSION}
+          go install honnef.co/go/tools/cmd/staticcheck@${STATICCHECK_VERSION}
+          echo "$HOME/go/bin" >> "$GITHUB_PATH"
 
       - name: Run pre-commit
         uses: pre-commit/action@v3.0.1
