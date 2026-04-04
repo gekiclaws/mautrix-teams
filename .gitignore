@@ -1,5 +1,6 @@
 *.yaml
 !example-config.yaml
+!config.example.yaml
 !.pre-commit-config.yaml
 
 *.db*
