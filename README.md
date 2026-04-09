@@ -4,6 +4,8 @@
 
 It currently targets the consumer Teams web stack at `teams.live.com`, using delegated user auth and polling-based sync.
 
+It is intended for self-hosters who want to connect personal Microsoft Teams chats to Beeper or another Matrix client and are comfortable building and running a bridge binary plus doing basic Matrix/appservice setup.
+
 ## Current support
 
 Supported:
