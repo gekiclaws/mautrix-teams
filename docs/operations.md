@@ -26,6 +26,62 @@ Useful log themes:
 
 ## Common Failure Modes
 
+### First-Run Setup Issues
+
+#### Login Never Completes
+
+Symptoms:
+
+- the login flow sits waiting and never reaches a connected state
+- the bridge appears to be waiting for browser storage or cookie submission
+
+Likely causes:
+
+- your client or provisioning flow does not support the `bridgev2` cookie/webview login contract
+- Teams localStorage changed and the extractor no longer finds the MSAL keys it expects
+
+What to check:
+
+- bridge logs for `Teams webview login still waiting for cookie submission`
+- bridge logs for `FI.MAU.TEAMS_INVALID_STORAGE`
+- whether your client can actually submit the webview localStorage payload expected by the bridge
+
+#### `bad_credentials` Immediately After Login
+
+Symptoms:
+
+- login completes, but the user state quickly flips to `bad_credentials`
+
+Likely causes:
+
+- refresh token extraction failed
+- the built-in Teams OAuth client ID no longer matches the current web app
+- Microsoft changed the Skype token exchange behavior
+
+Recovery:
+
+1. Re-run the login flow and inspect logs around token extraction.
+2. If Microsoft changed the Teams web client ID, set `network.client_id` explicitly.
+3. If the token exchange itself is failing, treat it as an upstream integration break rather than a config issue.
+
+#### Matrix Side Never Connects
+
+Symptoms:
+
+- the process starts, but the appservice never connects cleanly to Matrix
+
+Likely causes:
+
+- `homeserver.address` or `homeserver.domain` does not match the homeserver
+- appservice registration was not installed or tokens do not match
+- websocket mode is enabled against a standard homeserver deployment
+
+Recovery:
+
+1. Double-check `homeserver.address`, `homeserver.domain`, `appservice.as_token`, and `appservice.hs_token`.
+2. Confirm the generated `registration.yaml` is actually installed on the homeserver side.
+3. Leave `homeserver.websocket` disabled unless the homeserver explicitly supports the mautrix websocket transport.
+
 ### Auth Or Token Failures
 
 Symptoms:
@@ -46,6 +102,7 @@ Recovery:
 2. If extraction still fails, inspect login logs for MSAL/localStorage errors.
 3. If Microsoft changed the web client ID, set `network.client_id` explicitly.
 4. If only attachments fail, verify whether the problem is Graph-specific rather than full login breakage.
+5. Confirm the account works on `teams.live.com`, not only in an enterprise Teams tenant flow.
 
 ### Teams API Breakage
 
@@ -131,6 +188,7 @@ Likely causes:
 - Missing or expired Graph token
 - Missing Teams `DriveItemID` on inbound payload
 - File exceeds the current 100 MiB in-memory cap
+- Login is otherwise healthy, but Graph refresh failed separately from the main Teams token path
 
 Recovery:
 
